@@ -1,7 +1,8 @@
 import './style.css';
 import { randomPlan } from '../ai/randomAi';
 import { createInitialState } from '../core/board';
-import { checkMove } from '../core/moves';
+import { gameOutcome, isInCheck, keepsKingSafe } from '../core/check';
+import { checkMove, geometryReachable } from '../core/moves';
 import { replaySteps } from '../core/replay';
 import { Game } from '../core/sequence';
 import { DEFAULT_RULES, type CancelReason, type Color, type GameEvent, type GameState, type PieceState, type PieceType, type PlannedAction, type Square } from '../core/types';
@@ -13,12 +14,14 @@ import { PIECE_DEFS, pieceSvg } from './pieces';
 const PLAN_SECONDS = 10;
 const STEP_MS = 1500; // durée d'un sous-tour à l'écran
 const SUB_COLORS = ['#4cc2ff', '#ffc247', '#ff6bd6'];
+const DRAG_THRESHOLD = 6; // px avant qu'un appui devienne un glisser
 const NAMES: Record<PieceType, string> = { K: 'Roi', Q: 'Dame', R: 'Tour', B: 'Fou', N: 'Cavalier', P: 'Pion' };
 const REASONS: Record<CancelReason, string> = {
   'piece-not-found': 'la pièce a été capturée', 'not-owner': 'pièce adverse', 'already-acted': 'déjà jouée',
   'no-move': 'pas de déplacement', 'out-of-bounds': 'hors plateau', 'illegal-geometry': 'impossible depuis sa position réelle',
   'path-blocked': 'trajectoire bloquée', 'friendly-occupied': 'case alliée', 'blocked-forward': 'pion bloqué',
   'no-capture-target': 'rien à capturer', 'target-moved': 'la cible est partie', 'ally-conflict': 'un allié visait la même case',
+  'king-in-check': 'mettrait ou laisserait son roi en échec', 'king-capture': 'on ne capture pas un roi : on le met mat',
 };
 
 const app = document.getElementById('app')!;
@@ -31,26 +34,32 @@ let state: GameState = createInitialState();
 let game: Game | null = null; // autoritaire : IA et hôte seulement
 let conn: Conn | null = null;
 let plan: PlannedAction[][] = [[], [], []];
+/** Sous-tour en cours de programmation (0..2). */
 let activeSub = 0;
+/** Nombre de coups programmés appliqués à l'affichage (0..3) : le plateau montre la position prévue. */
+let viewAt = 0;
 let selected: string | null = null;
 let deadline = 0;
 let submitted = false;
 let busy = false;
 let currentStep = -1; // sous-tour affiché pendant la résolution
-let planBase: PieceState[] = []; // pièces au début de la Séquence (point de départ des flèches)
 let timer: number | undefined;
 let logLines: { text: string; cls?: string }[] = [];
+let planBase: PieceState[] = []; // pièces au début de la Séquence
+let endReason: string | undefined; // raison de fin de partie (mat, pat) pour la bannière
+let drag: { id: string; x: number; y: number; active: boolean; pointerId: number } | null = null;
 
 const opp = (c: Color): Color => (c === 'white' ? 'black' : 'white');
 const sqName = (f: number, r: number) => 'abcdefgh'[f]! + (r + 1);
-const pieceById = (id: string) => state.pieces.find((p) => p.id === id);
 const flip = () => me === 'black';
 /** Case logique -> colonne/ligne à l'écran (le joueur noir voit le plateau retourné). */
 const disp = (s: Square) => ({ c: flip() ? 7 - s.file : s.file, row: flip() ? s.rank : 7 - s.rank });
 const pct = (s: Square) => { const d = disp(s); return { x: (d.c + 0.5) * 12.5, y: (d.row + 0.5) * 12.5 }; };
+const startRankOf = (c: Color) => (c === 'white' ? 1 : 6);
+const dirOf = (c: Color): 1 | -1 => (c === 'white' ? 1 : -1);
 
 // --- Références DOM de l'écran de jeu ---------------------------------------
-let boardEl: HTMLElement, piecesEl: HTMLElement, fxEl: HTMLElement, arrowsEl: SVGSVGElement;
+let boardEl: HTMLElement, piecesEl: HTMLElement, fxEl: HTMLElement;
 const pieceEls = new Map<string, HTMLElement>();
 
 document.body.insertAdjacentHTML('afterbegin', PIECE_DEFS);
@@ -111,7 +120,7 @@ function showJoin(code: string) {
 
 // --- Construction de l'écran de jeu ------------------------------------------
 function buildGame() {
-  pieceEls.clear(); logLines = [];
+  pieceEls.clear(); logLines = []; drag = null;
   const squares: string[] = [];
   for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
     const f = flip() ? 7 - col : col;
@@ -129,37 +138,66 @@ function buildGame() {
     <div class="boardwrap">
       <div class="board" id="board">${squares.join('')}
         <div class="layer" id="pieces"></div>
-        <svg class="layer arrows" id="arrows" viewBox="0 0 8 8" preserveAspectRatio="none"></svg>
         <div class="layer" id="fx"></div>
         <div class="banner" id="banner" hidden></div>
       </div>
     </div>
     <div class="pips" id="pips">${[0, 1, 2].map((t) => `<span style="--c:${SUB_COLORS[t]}">${t + 1}</span>`).join('')}</div>
     <div class="slots" id="slots"></div>
+    <p class="hint center">Glissez une pièce (ou cliquez-la, puis sa destination). Le plateau montre la position prévue : une pièce peut rejouer à chaque sous-tour.</p>
     <div class="row actions"><button id="clear">Effacer ce coup</button><button class="primary" id="ok">Valider</button></div>
     <div class="log" id="log"></div>`;
-  boardEl = $('board'); piecesEl = $('pieces'); fxEl = $('fx'); arrowsEl = $('arrows') as unknown as SVGSVGElement;
+  boardEl = $('board'); piecesEl = $('pieces'); fxEl = $('fx');
 
-  boardEl.addEventListener('click', (ev) => {
-    const sq = (ev.target as HTMLElement).closest<HTMLElement>('.sq');
-    if (sq && !locked()) onSquare(+sq.dataset.f!, +sq.dataset.r!);
-  });
-  $('clear').onclick = () => { if (!locked()) { plan[activeSub] = []; selected = null; refreshPlanUi(); } };
+  boardEl.addEventListener('pointerdown', onPointerDown);
+  boardEl.addEventListener('pointermove', onPointerMove);
+  boardEl.addEventListener('pointerup', onPointerUp);
+  boardEl.addEventListener('pointercancel', () => endDrag(false, null));
+  $('clear').onclick = () => { if (!locked()) { plan[activeSub] = []; viewAt = activeSub; selected = null; refreshPlanUi(); } };
   $('ok').onclick = submit;
   const mute = $('mute');
   const paintMute = () => (mute.textContent = isMuted() ? '🔇' : '🔊');
   mute.onclick = () => { setMuted(!isMuted()); paintMute(); };
   paintMute();
-  syncPieces();
-  refreshPlanUi();
 }
 
 const locked = () => busy || submitted || !!state.winner;
 
+// --- Prévisualisation : mes pièces sont déplacées selon mon plan ------------
+/** Pièces telles qu'elles seraient après mes `upTo` premiers coups (en supposant qu'ils réussissent). */
+function previewPieces(upTo: number): PieceState[] {
+  const list: PieceState[] = planBase.map((p) => ({ ...p, pos: { ...p.pos } }));
+  for (let t = 0; t < upTo; t++) {
+    const a = plan[t]![0];
+    const p = a && list.find((q) => q.id === a.pieceId);
+    if (!p) continue;
+    p.pos = { ...a.to }; p.hasMoved = true;
+    if (p.type === 'P' && p.pos.rank === (p.color === 'white' ? 7 : 0)) p.type = 'Q';
+  }
+  return list;
+}
+
+/** Position effective de l'aperçu : une pièce adverse sous une de mes pièces prévues est considérée capturée. */
+const effective = (list: PieceState[]) =>
+  list.filter((p) => !(p.color !== me && list.some((q) => q.color === me && q.pos.file === p.pos.file && q.pos.rank === p.pos.rank)));
+
+/** Message d'état pendant la planification (l'aperçu suppose l'adversaire immobile). */
+function planStatus(): string {
+  const eff = effective(previewPieces(viewAt));
+  if (isInCheck(eff, 8, me)) return 'Échec ! Protégez votre roi';
+  const out = gameOutcome(eff, 8);
+  if (out?.reason === 'checkmate' && out.winner === me) return 'Mat prévu (si l\'adversaire ne bouge pas)';
+  if (isInCheck(eff, 8, opp(me))) return 'Échec prévu au roi adverse';
+  return 'Planifiez vos 3 coups';
+}
+
+/** Position d'une pièce juste avant le sous-tour t, d'après mon plan. */
+const positionBefore = (id: string, t: number): Square => previewPieces(t).find((p) => p.id === id)!.pos;
+
 // --- Pièces (éléments persistants : elles glissent d'une case à l'autre) -----
-function syncPieces() {
-  const alive = new Set(state.pieces.map((p) => p.id));
-  for (const p of state.pieces) {
+function syncPieces(list: PieceState[]) {
+  const alive = new Set(list.map((p) => p.id));
+  for (const p of list) {
     let el = pieceEls.get(p.id);
     if (!el) {
       el = document.createElement('div');
@@ -171,98 +209,155 @@ function syncPieces() {
     const d = disp(p.pos);
     el.style.setProperty('--c', String(d.c));
     el.style.setProperty('--r', String(d.row));
+    // Une pièce adverse sous une de mes pièces prévues (capture supposée) est atténuée.
+    const covered = p.color !== me && list.some((q) => q.color === me && q.pos.file === p.pos.file && q.pos.rank === p.pos.rank);
+    el.classList.toggle('covered', covered);
+    el.classList.toggle('check', p.type === 'K' && isInCheck(effective(list), 8, p.color));
   }
   for (const [id, el] of [...pieceEls]) if (!alive.has(id)) { pieceEls.delete(id); el.remove(); }
 }
 
-/** Position supposée d'une pièce au sous-tour t si ses propres coups précédents réussissent. */
-function projected(id: string, t: number): { pos: Square; moved: boolean } {
-  const p = planBase.find((q) => q.id === id) ?? pieceById(id)!; // état figé au début de la Séquence
-  let pos = p.pos; let moved = p.hasMoved;
-  for (let i = 0; i < t; i++) {
-    const a = plan[i]![0];
-    if (a && a.pieceId === id) { pos = a.to; moved = true; }
-  }
-  return { pos, moved };
+/** Remet les pièces à leur position réelle sans animation (avant de jouer la résolution). */
+function snapPieces(list: PieceState[]) {
+  piecesEl.classList.add('noanim');
+  syncPieces(list);
+  void piecesEl.offsetWidth;
+  piecesEl.classList.remove('noanim');
 }
 
 // --- Interface de planification ----------------------------------------------
 function refreshPlanUi() {
-  // Statut
   const over = state.winner;
   $('status').textContent = over ? (over === 'draw' ? 'Match nul' : over === me ? 'Victoire !' : 'Défaite')
-    : busy ? 'Résolution' : submitted ? 'Plan envoyé… en attente' : 'Planifiez vos 3 coups';
+    : busy ? 'Résolution' : submitted ? 'Plan envoyé… en attente' : planStatus();
+
+  const preview = !busy && !over;
+  const list = preview ? previewPieces(viewAt) : state.pieces;
+  if (preview && !drag?.active) syncPieces(list);
+
   // Cases : sélection + aides
-  boardEl.querySelectorAll('.sq').forEach((el) => el.classList.remove('sel', 'hint', 'hint-cap'));
+  boardEl.querySelectorAll('.sq').forEach((el) => el.classList.remove('sel', 'hint', 'hint-cap', 'hint-soft'));
   piecesEl.querySelectorAll('.piece').forEach((el) => el.classList.remove('selected'));
-  if (selected && !locked()) {
-    const p = pieceById(selected)!;
-    const pr = projected(selected, activeSub);
-    document.querySelector<HTMLElement>(`.sq[data-f="${pr.pos.file}"][data-r="${pr.pos.rank}"]`)?.classList.add('sel');
+  if (selected && preview && !locked()) {
+    const eff = effective(list);
+    const p = list.find((q) => q.id === selected)!;
+    sqEl(p.pos)?.classList.add('sel');
     pieceEls.get(selected)?.classList.add('selected');
-    const byId = new Map(state.pieces.map((q) => [q.id, q]));
-    const snap = { size: 8, at: (s: Square) => { const id = state.grid[s.rank * 8 + s.file]; return id ? byId.get(id) : undefined; } };
-    const ghost: PieceState = { ...p, pos: pr.pos, hasMoved: pr.moved };
-    const dir = p.color === 'white' ? 1 : -1;
+    const snap = { size: 8, at: (s: Square) => eff.find((q) => q.pos.file === s.file && q.pos.rank === s.rank) };
     for (let f = 0; f < 8; f++) for (let r = 0; r < 8; r++) {
-      const c = checkMove(snap, ghost, { file: f, rank: r }, p.color === 'white' ? 1 : 6, dir);
-      if (c.ok) document.querySelector<HTMLElement>(`.sq[data-f="${f}"][data-r="${r}"]`)?.classList.add(c.capture ? 'hint-cap' : 'hint');
+      const to = { file: f, rank: r };
+      if (!isLegalTarget(list, p, to)) continue;
+      const c = checkMove(snap, p, to, startRankOf(me), dirOf(me));
+      sqEl(to)?.classList.add(c.ok ? (c.capture ? 'hint-cap' : 'hint') : 'hint-soft');
     }
   }
+
   // Cartes des 3 sous-tours
   $('slots').innerHTML = [0, 1, 2].map((t) => {
-    const a = plan[t]![0]; const p = a && pieceById(a.pieceId);
-    const from = a && p ? projected(a.pieceId, t).pos : null;
+    const a = plan[t]![0]; const p = a && planBase.find((q) => q.id === a.pieceId);
+    const from = a && p ? positionBefore(a.pieceId, t) : null;
     const body = a && p && from
       ? `<span class="mini ${p.color[0]}">${pieceSvg(p.type)}</span><b>${NAMES[p.type]}</b><span>${sqName(from.file, from.rank)} → ${sqName(a.to.file, a.to.rank)}</span>`
       : '<span class="empty">Aucun coup</span>';
-    return `<button class="slot ${t === activeSub ? 'active' : ''} ${currentStep === t ? 'now' : ''}" data-t="${t}" style="--c:${SUB_COLORS[t]}"><em>${t + 1}</em>${body}</button>`;
+    return `<button class="slot ${t === activeSub && !busy ? 'active' : ''} ${currentStep === t ? 'now' : ''}" data-t="${t}" style="--c:${SUB_COLORS[t]}"><em>${t + 1}</em>${body}</button>`;
   }).join('');
-  $('slots').querySelectorAll<HTMLElement>('.slot').forEach((el) => (el.onclick = () => { if (!locked()) { activeSub = +el.dataset.t!; selected = null; refreshPlanUi(); } }));
+  $('slots').querySelectorAll<HTMLElement>('.slot').forEach((el) => (el.onclick = () => {
+    if (!locked()) { activeSub = +el.dataset.t!; viewAt = activeSub; selected = null; refreshPlanUi(); }
+  }));
   $('pips').querySelectorAll('span').forEach((el, i) => el.classList.toggle('on', i === currentStep));
   ($('ok') as HTMLButtonElement).disabled = locked();
   ($('clear') as HTMLButtonElement).disabled = locked();
   $('log').innerHTML = logLines.map((l) => `<div class="${l.cls ?? ''}">${l.text}</div>`).join('');
   $('log').scrollTop = $('log').scrollHeight;
-  renderArrows();
 }
 
-/** Flèches de programmation colorées par sous-tour (la plus récente / active est plus épaisse). */
-function renderArrows() {
-  let svg = '';
-  plan.forEach((acts, t) => {
-    const a = acts[0]; if (!a || !pieceById(a.pieceId)) return;
-    const from = disp(projected(a.pieceId, t).pos); const to = disp(a.to);
-    const x1 = from.c + 0.5, y1 = from.row + 0.5, x2 = to.c + 0.5, y2 = to.row + 0.5;
-    const len = Math.hypot(x2 - x1, y2 - y1) || 1;
-    const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
-    const head = 0.3; const bx = x2 - ux * head * 1.2, by = y2 - uy * head * 1.2;
-    const col = SUB_COLORS[t]!;
-    const dim = currentStep >= 0 && currentStep !== t ? 0.15 : t === activeSub && currentStep < 0 ? 1 : 0.7;
-    svg += `<g opacity="${dim}"><line x1="${x1 + ux * 0.25}" y1="${y1 + uy * 0.25}" x2="${bx}" y2="${by}" stroke="${col}" stroke-width="${t === activeSub ? 0.13 : 0.09}" stroke-linecap="round"/>
-      <polygon points="${x2},${y2} ${bx - uy * head * 0.7},${by + ux * head * 0.7} ${bx + uy * head * 0.7},${by - ux * head * 0.7}" fill="${col}"/>
-      <circle cx="${x2 + 0.27}" cy="${y2 - 0.27}" r="0.2" fill="#0b0e17" stroke="${col}" stroke-width="0.05"/>
-      <text x="${x2 + 0.27}" y="${y2 - 0.27 + 0.085}" text-anchor="middle" font-size="0.26" font-weight="800" fill="${col}">${t + 1}</text></g>`;
-  });
-  arrowsEl.innerHTML = svg;
+/**
+ * Destination autorisée par l'interface : géométrie valide, pas sur une de mes pièces, et sans
+ * mettre/laisser mon roi en échec (l'adversaire étant supposé immobile, comme le moteur).
+ */
+function isLegalTarget(list: PieceState[], p: PieceState, to: Square): boolean {
+  if (!geometryReachable(p, to, 8, startRankOf(me), dirOf(me))) return false;
+  if (list.some((q) => q.color === me && q.pos.file === to.file && q.pos.rank === to.rank)) return false;
+  if (list.some((q) => q.type === 'K' && q.color !== me && q.pos.file === to.file && q.pos.rank === to.rank)) return false; // un roi ne se capture pas
+  return keepsKingSafe(effective(list), 8, p, to);
 }
 
-function onSquare(f: number, r: number) {
-  // Sélection d'une de ses pièces (ou, si elle vise déjà cette case, elle reste ciblable)
-  const here = state.pieces.find((p) => p.pos.file === f && p.pos.rank === r);
-  if (here && here.color === me) { selected = here.id; sfx.select(); refreshPlanUi(); return; }
-  if (!selected) return;
-  plan[activeSub] = [{ pieceId: selected, to: { file: f, rank: r } }].slice(0, DEFAULT_RULES.maxActionsPerSubTurn);
+const sqEl = (s: Square) => document.querySelector<HTMLElement>(`.sq[data-f="${s.file}"][data-r="${s.rank}"]`);
+
+/** Enregistre le coup du sous-tour actif : la pièce se déplace à l'écran. */
+function place(id: string, to: Square) {
+  plan[activeSub] = [{ pieceId: id, to }].slice(0, DEFAULT_RULES.maxActionsPerSubTurn);
   sfx.plan();
   selected = null;
-  const free = plan.findIndex((a) => a.length === 0);
-  if (free >= 0) activeSub = free;
+  viewAt = activeSub + 1;
+  activeSub = Math.min(activeSub + 1, 2);
   refreshPlanUi();
+}
+
+// --- Souris / tactile : clic-clic et glisser-déposer --------------------------
+function squareAt(ev: PointerEvent): Square | null {
+  const rect = boardEl.getBoundingClientRect();
+  const col = Math.floor(((ev.clientX - rect.left) / rect.width) * 8);
+  const row = Math.floor(((ev.clientY - rect.top) / rect.height) * 8);
+  if (col < 0 || col > 7 || row < 0 || row > 7) return null;
+  return { file: flip() ? 7 - col : col, rank: flip() ? row : 7 - row };
+}
+
+function onPointerDown(ev: PointerEvent) {
+  if (locked() || ev.button > 0) return;
+  // Si l'affichage montre le résultat du dernier coup, on revient d'abord au sous-tour actif.
+  if (viewAt !== activeSub) { viewAt = activeSub; selected = null; refreshPlanUi(); return; }
+  const sq = squareAt(ev); if (!sq) return;
+  const list = previewPieces(viewAt);
+  const mine = list.find((p) => p.color === me && p.pos.file === sq.file && p.pos.rank === sq.rank);
+  if (mine) {
+    selected = mine.id; sfx.select();
+    drag = { id: mine.id, x: ev.clientX, y: ev.clientY, active: false, pointerId: ev.pointerId };
+    refreshPlanUi();
+    return;
+  }
+  // clic-clic : destination d'une pièce déjà sélectionnée
+  const p = selected ? list.find((q) => q.id === selected) : undefined;
+  if (p && isLegalTarget(list, p, sq)) place(p.id, sq);
+}
+
+function onPointerMove(ev: PointerEvent) {
+  if (!drag) return;
+  if (!drag.active) {
+    if (Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < DRAG_THRESHOLD) return;
+    drag.active = true;
+    boardEl.setPointerCapture(drag.pointerId);
+    pieceEls.get(drag.id)?.classList.add('dragging');
+  }
+  const rect = boardEl.getBoundingClientRect();
+  const el = pieceEls.get(drag.id);
+  el?.style.setProperty('--c', String((ev.clientX - rect.left) / rect.width * 8 - 0.5));
+  el?.style.setProperty('--r', String((ev.clientY - rect.top) / rect.height * 8 - 0.5));
+}
+
+function onPointerUp(ev: PointerEvent) { endDrag(true, ev); }
+
+function endDrag(drop: boolean, ev: PointerEvent | null) {
+  const d = drag; drag = null;
+  if (!d) return;
+  const el = pieceEls.get(d.id);
+  el?.classList.remove('dragging');
+  if (!d.active) return; // simple clic : la pièce reste sélectionnée
+  try { boardEl.releasePointerCapture(d.pointerId); } catch { /* déjà relâché */ }
+  const sq = drop && ev ? squareAt(ev) : null;
+  const list = previewPieces(viewAt);
+  const p = list.find((q) => q.id === d.id)!;
+  if (sq && isLegalTarget(list, p, sq)) {
+    place(d.id, sq);
+  } else {
+    refreshPlanUi(); // retour à la case d'origine
+  }
 }
 
 // --- Cycle de jeu --------------------------------------------------------------
 function startPlanning() {
-  plan = [[], [], []]; activeSub = 0; selected = null; submitted = false; busy = false; currentStep = -1;
+  plan = [[], [], []]; activeSub = 0; viewAt = 0; selected = null; drag = null;
+  submitted = false; busy = false; currentStep = -1;
   planBase = state.pieces.map((p) => ({ ...p, pos: { ...p.pos } }));
   deadline = Date.now() + PLAN_SECONDS * 1000;
   $('banner').hidden = true;
@@ -278,13 +373,14 @@ function startPlanning() {
     if (left < 3000 && s !== lastTick && left > 0) { lastTick = s; sfx.tick(); }
     if (left <= 0) submit();
   }, 100);
-  syncPieces();
+  snapPieces(state.pieces);
   refreshPlanUi();
 }
 
 function submit() {
   if (submitted || busy || state.winner) return;
-  submitted = true; clearInterval(timer); selected = null;
+  submitted = true; clearInterval(timer); selected = null; viewAt = 3;
+  if (drag?.active) endDrag(false, null);
   $('clock').textContent = '';
   if (mode === 'ai') {
     game!.submitPlan(me, plan);
@@ -323,14 +419,22 @@ function describe(e: GameEvent, before: GameState): { text: string; cls?: string
     case 'capture': return { text: `<b>${n}</b> ${nm(e.attackerId)} capture ${nm(e.victimId)}`, cls: 'cap' };
     case 'collision': return { text: `<b>${n}</b> Collision en ${sqName(e.at.file, e.at.rank)} : ${e.winnerId ? nm(e.winnerId) + " l'emporte" : 'destruction mutuelle'}`, cls: 'cap' };
     case 'promotion': return { text: `<b>${n}</b> ${nm(e.pieceId)} promu en dame` };
-    case 'game-over': return { text: e.winner === 'draw' ? 'Match nul.' : `Victoire des ${e.winner === 'white' ? 'blancs' : 'noirs'} !`, cls: 'cap' };
+    case 'check': return { text: `<b>${n}</b> Échec au roi ${e.color === 'white' ? 'blanc' : 'noir'} !`, cls: 'cap' };
+    case 'game-over': return { text: endText(e.winner, e.reason), cls: 'cap' };
     default: return null;
   }
 }
 
+function endText(winner: Color | 'draw', reason?: string): string {
+  if (reason === 'stalemate') return 'Pat : match nul.';
+  if (winner === 'draw') return reason === 'checkmate' ? 'Double échec et mat : match nul.' : 'Match nul.';
+  return `Échec et mat : victoire des ${winner === 'white' ? 'blancs' : 'noirs'} !`;
+}
+
 function playResolution(events: GameEvent[], finalState: GameState) {
-  busy = true; clearInterval(timer); logLines = []; selected = null;
+  busy = true; clearInterval(timer); logLines = []; selected = null; drag = null; endReason = undefined;
   $('clock').textContent = ''; ($('timebar') as HTMLElement).style.width = '0%';
+  snapPieces(state.pieces); // les pièces quittent la position "prévue" pour la position réelle
   const steps = replaySteps(state, events);
   let i = 0;
   const next = () => {
@@ -338,7 +442,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     if (!step) { finish(); return; }
     currentStep = step.subTurn;
     const before = state;
-    for (const e of step.events) { const d = describe(e, before); if (d) logLines.push(d); }
+    for (const e of step.events) { const d = describe(e, before); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
 
     // 1. Coups caducs : la pièce tremble, un nuage de fumée, rien ne bouge.
     for (const e of step.events) if (e.kind === 'cancelled') {
@@ -358,8 +462,8 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     if (step.events.some((e) => e.kind === 'move')) sfx.move();
     const dying = new Set(before.pieces.map((p) => p.id));
     for (const p of state.pieces) dying.delete(p.id);
-    for (const id of dying) pieceEls.get(id)?.classList.add('arriving-victim');
-    syncPieces(); // positions (les victimes restent le temps de l'impact)
+    // Les victimes restent affichées le temps de l'impact : on ne synchronise que les survivantes.
+    syncPieces([...state.pieces, ...before.pieces.filter((p) => dying.has(p.id))]);
     refreshPlanUi();
 
     // 3. Impacts, un peu après l'arrivée.
@@ -372,16 +476,16 @@ function playResolution(events: GameEvent[], finalState: GameState) {
         }
         if (e.kind === 'promotion') { const c = pct(e.at); ring(fxEl, c.x, c.y, '#7dffb0'); }
       }
-      for (const id of dying) { const el = pieceEls.get(id); el?.querySelector('.inner')?.classList.add('die'); window.setTimeout(() => el?.remove(), 600); }
+      for (const id of dying) { const el = pieceEls.get(id); el?.querySelector('.inner')?.classList.add('die'); window.setTimeout(() => { el?.remove(); pieceEls.delete(id); }, 600); }
     }, 780);
     window.setTimeout(next, STEP_MS);
   };
   const finish = () => {
     state = finalState; busy = false; currentStep = -1;
-    syncPieces(); refreshPlanUi();
+    syncPieces(state.pieces); refreshPlanUi();
     if (state.winner) {
       const ban = $('banner'); const won = state.winner === me;
-      ban.innerHTML = `<h2>${state.winner === 'draw' ? 'Match nul' : won ? 'Victoire !' : 'Défaite'}</h2><button class="primary" id="menu">Retour au menu</button>`;
+      ban.innerHTML = `<h2>${state.winner === 'draw' ? 'Match nul' : won ? 'Victoire !' : 'Défaite'}</h2><p>${endText(state.winner, endReason)}</p><button class="primary" id="menu">Retour au menu</button>`;
       ban.className = `banner ${state.winner === 'draw' ? '' : won ? 'win' : 'lose'}`; ban.hidden = false;
       $('menu').onclick = () => showMenu();
       state.winner === me ? sfx.win() : sfx.lose();

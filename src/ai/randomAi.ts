@@ -1,3 +1,4 @@
+import { keepsKingSafe } from '../core/check';
 import { checkMove } from '../core/moves';
 import { sqKey } from '../core/board';
 import { DEFAULT_RULES, type Color, type GameState, type PieceState, type Plan, type RulesConfig } from '../core/types';
@@ -19,7 +20,7 @@ export function randomPlan(state: GameState, color: Color, rules: RulesConfig = 
     const out: { to: { file: number; rank: number }; capture: boolean }[] = [];
     for (let f = 0; f < state.size; f++) for (let r = 0; r < state.size; r++) {
       const c = checkMove(snap, p, { file: f, rank: r }, startRank, dir);
-      if (c.ok) out.push({ to: { file: f, rank: r }, capture: c.capture });
+      if (c.ok && snap.at({ file: f, rank: r })?.type !== 'K' && keepsKingSafe(state.pieces, state.size, p, { file: f, rank: r })) out.push({ to: { file: f, rank: r }, capture: c.capture });
     }
     return out;
   };

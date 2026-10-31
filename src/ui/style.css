@@ -113,3 +113,18 @@ h1.small { margin: 0; font-size: 1.4rem; }
 .log b { color: var(--fg); margin-right: .4em; }
 .log .cancel { color: #ff9b6b; } .log .cap { color: #ff7d8d; }
 @media (max-width: 420px) { .slot { font-size: .75rem; min-height: 96px; } }
+
+/* --- Prévisualisation, glisser-déposer, échec --- */
+.board { touch-action: none; }
+.piece { z-index: 1; }
+.noanim .piece { transition: none !important; }
+.piece.dragging { transition: none; z-index: 20; }
+.piece.dragging .inner { transform: scale(1.25); filter: drop-shadow(0 10px 8px #000a); }
+.piece.covered { opacity: .3; }
+.piece.check::before { content: ''; position: absolute; inset: 4%; border-radius: 50%; background: radial-gradient(#ff5a6ecc, #ff5a6e00 70%); animation: pulse 1s infinite alternate; }
+@keyframes pulse { from { opacity: .4; } to { opacity: 1; } }
+.sq.hint-soft::before { content: ''; position: absolute; left: 41%; top: 41%; width: 18%; height: 18%; border-radius: 50%; border: 2px dashed #0b1630aa; }
+.sq { cursor: pointer; }
+.piece .inner { cursor: grab; }
+.center { text-align: center; margin: 8px 0 0; }
+.banner p { margin: 0; color: var(--muted); }

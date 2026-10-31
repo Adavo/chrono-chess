@@ -6,10 +6,10 @@ Un coup devenu impossible au moment de s'exécuter (pièce capturée, trajectoir
 
 ## Jouer
 - **Contre l'IA** ou **en ligne** à deux (code de 5 caractères, WebRTC via [PeerJS](https://peerjs.com/), comme Nidus Breach). Internet requis pour le multi, page servie en HTTPS.
-- Cliquer une de ses pièces, puis la destination, pour le sous-tour sélectionné. `Valider` envoie le plan avant la fin du chrono.
+- Glisser-déposer une pièce (ou clic sur la pièce puis sur sa destination) : le plateau montre la position prévue, et une même pièce peut jouer à chaque sous-tour. `Valider` envoie le plan avant la fin du chrono.
 
 ## Règles de résolution
-Voir le commentaire en tête de [`src/core/resolution.ts`](src/core/resolution.ts). En bref : validation simultanée sur l'état du début de sous-tour ; arrivée sur un ennemi immobile = capture ; arrivée simultanée de deux ennemis = la plus forte valeur gagne (égalité : les deux disparaissent) ; les échanges de cases sont permis ; la partie s'arrête à la capture d'un roi.
+Voir le commentaire en tête de [`src/core/resolution.ts`](src/core/resolution.ts). Règle d'échec : si le roi est en échec au début d'un sous-tour, tout coup qui ne le sauve pas est annulé.
 
 ## Développement
 ```bash

@@ -1,4 +1,5 @@
 import { cloneState, rebuildGrid, sqKey } from './board';
+import { gameOutcome, isInCheck, keepsKingSafe } from './check';
 import { checkMove, type Snapshot } from './moves';
 import { buildQueue } from './plan';
 import {
@@ -38,7 +39,15 @@ import {
  *  6. Les cases traversées par une pièce glissante ne sont testées qu'au début du
  *     sous-tour : un ennemi qui s'y pose en même temps n'interrompt pas le trajet.
  *  7. Promotion automatique en dame. Roque et prise en passant : hors MVP.
- *  8. La partie s'arrête dès qu'un roi disparaît (les sous-tours restants sont ignorés).
+ *     Une pièce peut jouer à chaque sous-tour (la même pièce 3 fois de suite est permise).
+ *  8. Échec : un coup après lequel le roi du joueur serait attaqué (sur l'instantané) est annulé
+ *     ('king-in-check'). Roi déjà en échec : seul un coup qui le sauve (capture de l'attaquant,
+ *     interposition, fuite) est valide. Chaque coup est jugé seul, l'adversaire étant supposé
+ *     immobile. Par défaut (`strictKingSafety`), la règle est celle des échecs classiques : aucun coup ne
+ *     peut mettre ou laisser son roi en échec (roi sur une case attaquée, clouage…), échec ou pas.
+ *  9. Un roi ne se capture jamais ('king-capture'). La partie se termine par échec et mat (le joueur
+ *     maté perd ; les deux : nulle) ou par pat (nulle), évalués à la fin de chaque sous-tour ; les
+ *     sous-tours restants sont alors ignorés.
  */
 
 interface Validated {
@@ -79,6 +88,12 @@ export function resolveSubTurn(
   const cancel = (a: QueuedAction, reason: CancelReason) =>
     events.push({ kind: 'cancelled', subTurn, pieceId: a.pieceId, owner: a.owner, to: a.to, reason });
 
+  const checkCache = new Map<Color, boolean>();
+  const inCheck = (c: Color) => {
+    if (!checkCache.has(c)) checkCache.set(c, isInCheck(state.pieces, size, c));
+    return checkCache.get(c)!;
+  };
+
   const validated: Validated[] = [];
   const acted = new Set<string>();
   const claimed = new Set<string>(); // `${color}:${destKey}` — conflits entre alliés
@@ -93,6 +108,14 @@ export function resolveSubTurn(
     const startRank = piece.color === 'white' ? 1 : size - 2;
     const check = checkMove(snap, piece, a.to, startRank, dir);
     if (!check.ok) { cancel(a, check.reason); continue; }
+
+    // Un roi ne se capture jamais : on le met échec et mat.
+    if (check.capture && snap.at(a.to)?.type === 'K') { cancel(a, 'king-capture'); continue; }
+
+    // Règle d'échec : roi en échec au début du sous-tour => seul un coup qui le sauve est légal.
+    if (((rules.strictKingSafety ?? true) || inCheck(piece.color)) && !keepsKingSafe(state.pieces, size, piece, a.to)) {
+      cancel(a, 'king-in-check'); continue;
+    }
 
     const claim = `${piece.color}:${sqKey(a.to, size)}`;
     if (claimed.has(claim)) { cancel(a, 'ally-conflict'); continue; }
@@ -177,12 +200,15 @@ export function resolveSubTurn(
   rebuildGrid(next);
 
   // --- Étape 5 : fin de partie -------------------------------------------------
-  const kings = (c: Color) => next.pieces.some((p) => p.type === 'K' && p.color === c);
-  const w = kings('white');
-  const b = kings('black');
-  if (!w || !b) {
-    next.winner = w ? 'white' : b ? 'black' : 'draw';
-    events.push({ kind: 'game-over', subTurn, winner: next.winner });
+  const outcome = gameOutcome(next.pieces, size);
+  if (outcome?.reason !== 'checkmate') {
+    for (const c of ['white', 'black'] as const) {
+      if (isInCheck(next.pieces, size, c)) events.push({ kind: 'check', subTurn, color: c });
+    }
+  }
+  if (outcome) {
+    next.winner = outcome.winner;
+    events.push({ kind: 'game-over', subTurn, winner: outcome.winner, reason: outcome.reason });
   }
   return { state: next, events };
 }

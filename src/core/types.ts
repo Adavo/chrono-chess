@@ -76,7 +76,9 @@ export type CancelReason =
   | 'blocked-forward' // pion bloqué devant lui
   | 'no-capture-target' // capture en diagonale d'un pion sans cible
   | 'target-moved' // la cible d'une capture de pion est partie
-  | 'ally-conflict'; // un allié prioritaire vise la même case
+  | 'ally-conflict' // un allié prioritaire vise la même case
+  | 'king-in-check' // ce coup met ou laisse son propre roi en échec
+  | 'king-capture'; // un roi ne se capture jamais : on le met échec et mat
 
 /** Journal d'événements : sert à animer la phase cinématique. */
 export type GameEvent =
@@ -86,13 +88,19 @@ export type GameEvent =
   | { kind: 'capture'; subTurn: number; attackerId: PieceId; victimId: PieceId; at: Square }
   | { kind: 'collision'; subTurn: number; at: Square; pieceIds: PieceId[]; winnerId: PieceId | null }
   | { kind: 'promotion'; subTurn: number; pieceId: PieceId; at: Square }
-  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw' };
+  | { kind: 'check'; subTurn: number; color: Color } // le roi de `color` est en échec (sans être mat)
+  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw'; reason?: 'checkmate' | 'stalemate' | 'king-lost' };
 
 export interface RulesConfig {
   size: number;
   subTurns: number;
   /** Nombre max d'actions par joueur et par sous-tour (1 = un coup par sous-tour). */
   maxActionsPerSubTurn: number;
+  /**
+   * true (défaut) : règle des échecs classiques, aucun coup ne peut laisser ou mettre son roi en échec.
+   * false : seul un roi DÉJÀ en échec au début du sous-tour impose de parer l'échec.
+   */
+  strictKingSafety?: boolean;
   /** Valeur d'une pièce lors d'une collision (arrivée simultanée sur la même case). */
   collisionValue: Record<PieceType, number>;
 }
@@ -102,4 +110,5 @@ export const DEFAULT_RULES: RulesConfig = {
   subTurns: 3,
   maxActionsPerSubTurn: 1,
   collisionValue: { P: 1, N: 3, B: 3, R: 5, Q: 9, K: 100 },
+  strictKingSafety: true,
 };
