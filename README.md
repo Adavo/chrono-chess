@@ -19,6 +19,8 @@ npm test        # moteur de règles
 npm run build   # site statique dans dist/
 ```
 
+Chaque build publie `version.json` ; au chargement la page le compare (sans cache) à son propre build et se recharge une fois si une version plus récente est en ligne. Le numéro de version est affiché sur l'accueil, avec un bouton « Actualiser » qui vide les caches. `public/_headers` demande `no-cache` sur Netlify/Cloudflare (GitHub Pages l'ignore).
+
 Le moteur (`src/core`) est du TypeScript pur, sans DOM ni réseau ; l'hôte d'une partie en ligne (les blancs) est autoritaire.
 
 ## Hébergement GitHub Pages

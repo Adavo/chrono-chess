@@ -10,6 +10,7 @@ import { dropPeer, host, join, type Conn } from '../net/peer';
 import type { GuestToHost, HostToGuest } from '../net/transport';
 import { burst, isMuted, puff, ring, setMuted, sfx, unlockAudio } from './fx';
 import { PIECE_DEFS, pieceSvg } from './pieces';
+import { VERSION_LABEL, checkForUpdate, hardReload } from './version';
 
 const PLAN_SECONDS = 10;
 const STEP_MS = 1500; // durée d'un sous-tour à l'écran
@@ -75,9 +76,11 @@ function showMenu(msg = '') {
     <button class="primary" id="ai">Jouer contre l'IA</button>
     <button id="host">Créer une partie en ligne</button>
     <div class="row"><input id="code" placeholder="CODE" maxlength="5" autocomplete="off" /><button id="join">Rejoindre</button></div>
+    <p class="version">${VERSION_LABEL} · <button class="link" id="refresh" title="Vide le cache et recharge la page">↻ Actualiser</button></p>
   </section>`;
   $('ai').onclick = () => { mode = 'ai'; me = 'white'; game = new Game(createInitialState()); state = game.state; buildGame(); startPlanning(); };
   $('host').onclick = showHost;
+  $('refresh').onclick = () => void hardReload();
   $('join').onclick = () => showJoin(($('code') as HTMLInputElement).value.trim());
 }
 
@@ -498,3 +501,4 @@ function playResolution(events: GameEvent[], finalState: GameState) {
 function $(id: string): HTMLElement { return document.getElementById(id)!; }
 
 showMenu();
+void checkForUpdate();
