@@ -1,0 +1,19 @@
+{
+  "name": "chrono-chess",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrono Chess : échecs à programmation simultanée et temps discret",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
