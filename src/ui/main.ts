@@ -57,7 +57,7 @@ let timer: number | undefined;
 let logLines: LogLine[] = [];
 let planBase: GameState = state; // position au début de la Séquence
 let endReason: string | undefined; // raison de fin de partie (mat, pat) pour la bannière
-let drag: { id: string; x: number; y: number; active: boolean; pointerId: number } | null = null;
+let drag: { id: string; x: number; y: number; active: boolean; pointerId: number; again: boolean } | null = null;
 
 const opp = (c: Color): Color => (c === 'white' ? 'black' : 'white');
 const sqName = (f: number, r: number) => FILES[f]! + (r + 1);
@@ -269,10 +269,12 @@ function mustEscape(states: GameState[], at: number): boolean {
 function optimisticStep(s: GameState, a: PlannedAction): GameState {
   const next = cloneState(s);
   const p = next.pieces.find((q) => q.id === a.pieceId);
-  if (!p || next.pieces.some((q) => q.color === p.color && sameSquare(q.pos, a.to))) return s; // case alliée : jamais
+  if (!p) return s;
   const target = next.pieces.find((q) => q.color !== p.color && sameSquare(q.pos, a.to));
   if (target?.type === 'K') return s; // un roi ne se capture pas
-  next.pieces = next.pieces.filter((q) => q !== target);
+  // Contre-prise : une de mes pièces est sur la case visée ; on suppose que l'adversaire l'y a prise.
+  const lost = next.pieces.find((q) => q !== p && q.color === p.color && sameSquare(q.pos, a.to));
+  next.pieces = next.pieces.filter((q) => q !== target && q !== lost);
   p.pos = { ...a.to };
   if (p.type === 'P' && p.pos.rank === (p.color === 'white' ? SIZE - 1 : 0)) p.type = a.promo ?? 'N';
   rebuildGrid(next);
@@ -345,7 +347,7 @@ function refreshPlanUi() {
 
   // Une pièce adverse qui serait mangée si tout se passe bien reste affichée en transparence.
   const alive = new Set(view.pieces.map((q) => q.id));
-  const ghosts = preview ? planBase.pieces.filter((q) => !alive.has(q.id)) : [];
+  const ghosts = preview ? planBase.pieces.filter((q) => q.color !== me && !alive.has(q.id)) : [];
   if (preview && !drag?.active) syncPieces([...view.pieces, ...ghosts], new Set(ghosts.map((q) => q.id)));
 
   // Cases : sélection + aides
@@ -392,12 +394,13 @@ function refreshPlanUi() {
  * - 1er coup : la position est connue, on n'accepte que ce que le moteur validerait (trajectoire libre, pion qui capture
  *   une vraie cible, roi jamais sur une case attaquée, sortie d'échec si le roi l'est au départ).
  * - À partir du 2e coup : l'adversaire aura bougé, donc tout ce qui est géométriquement possible est proposé
- *   (sauf une case occupée par l'une de mes pièces) ; si le coup est vraiment illégal, il sera annulé à la résolution.
+ *   y compris une case occupée par l'une de mes pièces (contre-prise : l'adversaire l'y aura peut-être prise) ;
+ *   si le coup est vraiment illégal, il sera annulé à la résolution.
  */
 function isLegalTarget(view: GameState, p: PieceState, to: Square, first: boolean, escape: boolean): boolean {
   if (!geometryReachable(p, to, SIZE, dirOf(me))) return false;
-  if (view.pieces.some((q) => q.color === me && sameSquare(q.pos, to))) return false;
   if (!first) return true;
+  if (view.pieces.some((q) => q.color === me && sameSquare(q.pos, to))) return false; // 1er coup : case alliée certaine
   const snap = { size: SIZE, at: (s: Square) => view.pieces.find((q) => sameSquare(q.pos, s)) };
   if (!checkMove(snap, p, to, dirOf(me)).ok) return false;
   if (snap.at(to)?.type === 'K') return false; // un roi ne se capture pas
@@ -454,15 +457,16 @@ function onPointerDown(ev: PointerEvent) {
   const view = states[viewAt]!;
   const esc = mustEscape(states, viewAt);
   const mine = view.pieces.find((p) => p.color === me && sameSquare(p.pos, sq));
-  if (mine) {
-    selected = mine.id; sfx.select();
-    drag = { id: mine.id, x: ev.clientX, y: ev.clientY, active: false, pointerId: ev.pointerId };
-    refreshPlanUi();
-    return;
-  }
-  // clic-clic : destination d'une pièce déjà sélectionnée
+  // clic-clic : destination d'une pièce déjà sélectionnée (même sur une de mes pièces : contre-prise)
   const p = selected ? view.pieces.find((q) => q.id === selected) : undefined;
-  if (p && isLegalTarget(view, p, sq, viewAt === 0, esc)) place(p.id, sq);
+  if (p && p.id !== mine?.id && isLegalTarget(view, p, sq, viewAt === 0, esc)) { place(p.id, sq); return; }
+  if (mine) {
+    // un second appui sur la pièce déjà sélectionnée la désélectionne (au relâchement, sans glisser)
+    const again = mine.id === selected;
+    selected = mine.id; if (!again) sfx.select();
+    drag = { id: mine.id, x: ev.clientX, y: ev.clientY, active: false, pointerId: ev.pointerId, again };
+    refreshPlanUi();
+  }
 }
 
 function onPointerMove(ev: PointerEvent) {
@@ -486,7 +490,7 @@ function endDrag(drop: boolean, ev: PointerEvent | null) {
   if (!d) return;
   const el = pieceEls.get(d.id);
   el?.classList.remove('dragging');
-  if (!d.active) return; // simple clic : la pièce reste sélectionnée
+  if (!d.active) { if (d.again) { selected = null; refreshPlanUi(); } return; } // simple clic : sélectionne, ou désélectionne au second
   try { boardEl.releasePointerCapture(d.pointerId); } catch { /* déjà relâché */ }
   const sq = drop && ev ? squareAt(ev) : null;
   const states = previewStates();
