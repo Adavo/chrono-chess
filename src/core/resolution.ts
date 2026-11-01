@@ -4,6 +4,8 @@ import { checkMove, type Snapshot } from './moves';
 import { buildQueue } from './plan';
 import {
   DEFAULT_RULES,
+  PROMOTIONS,
+  STRENGTH,
   type ActionQueue,
   type CancelReason,
   type Color,
@@ -19,35 +21,30 @@ import {
 /**
  * ============================ PHASE DE RÉSOLUTION ============================
  *
- * Règles (Option 1 — "coup caduc") :
  *  1. Un sous-tour est résolu SIMULTANÉMENT : toutes les actions sont validées
  *     contre le même instantané (état au début du sous-tour), puis appliquées d'un coup.
- *  2. Une action invalide à cet instant (pièce disparue, trajectoire bloquée, case
- *     alliée, cible partie…) est ANNULÉE : la pièce reste où elle est. Jamais de
- *     correctif automatique, jamais de report sur un autre sous-tour.
- *  3. Les actions suivantes sont évaluées depuis la position RÉELLE de la pièce, pas
- *     depuis celle que le joueur imaginait.
- *  4. Collisions (voir resolveDestination) :
- *     - un mouvant sur une pièce ennemie immobile la capture ;
- *     - deux ennemis arrivant sur la même case : la plus forte valeur gagne,
- *       égalité = destruction mutuelle ;
- *     - une pièce qui quitte sa case n'est pas capturable à cet endroit (les croisements
- *       / échanges de cases sont donc permis) ;
- *     - une case alliée occupée au début du sous-tour bloque, même si l'allié part ;
- *     - deux alliés visant la même case : le premier de la file passe, l'autre est caduc.
- *  5. Capture en diagonale d'un pion : annulée si la cible a une action valide (elle part).
- *  6. Les cases traversées par une pièce glissante ne sont testées qu'au début du
- *     sous-tour : un ennemi qui s'y pose en même temps n'interrompt pas le trajet.
- *  7. Promotion automatique en dame. Roque et prise en passant : hors MVP.
- *     Une pièce peut jouer à chaque sous-tour (la même pièce 3 fois de suite est permise).
- *  8. Échec : un coup après lequel le roi du joueur serait attaqué (sur l'instantané) est annulé
- *     ('king-in-check'). Roi déjà en échec : seul un coup qui le sauve (capture de l'attaquant,
- *     interposition, fuite) est valide. Chaque coup est jugé seul, l'adversaire étant supposé
- *     immobile. Par défaut (`strictKingSafety`), la règle est celle des échecs classiques : aucun coup ne
- *     peut mettre ou laisser son roi en échec (roi sur une case attaquée, clouage…), échec ou pas.
- *  9. Un roi ne se capture jamais ('king-capture'). La partie se termine par échec et mat (le joueur
- *     maté perd ; les deux : nulle) ou par pat (nulle), évalués à la fin de chaque sous-tour ; les
- *     sous-tours restants sont alors ignorés.
+ *  2. Une action invalide à cet instant (pièce disparue, trajectoire bloquée, case alliée,
+ *     cible partie, roi en échec…) est ANNULÉE : la pièce reste où elle est. Jamais de correctif.
+ *  3. Les actions suivantes sont évaluées depuis la position RÉELLE de la pièce.
+ *  4. Collisions classiques des échecs : une pièce IMMOBILE (alliée ou ennemie) bloque la
+ *     trajectoire d'une tour, d'un fou ou d'une dame ; une pièce qui arrive sur une pièce ennemie
+ *     immobile la capture, quelle que soit sa force.
+ *  5. Deux pièces qui BOUGENT en même temps se croisent sans rien se faire (échange de cases
+ *     compris) : seule compte la case d'arrivée. Si deux pièces ennemies ARRIVENT ensemble sur la
+ *     même case, la plus forte reste — Roi > Dame > Tour > Cavalier > Fou > Pion — et deux pièces
+ *     de même force s'annulent.
+ *  6. Une case alliée occupée au début du sous-tour bloque, même si l'allié part ; deux alliés
+ *     visant la même case : le premier de la file passe, l'autre est caduc.
+ *  7. Capture en diagonale d'un pion : annulée si la cible a une action valide (elle part).
+ *  8. Échec : pendant les coups d'une manche, on bouge LIBREMENT (on peut exposer son roi, le
+ *     mettre en échec ou le laisser en échec). Seule exception : un roi déjà en échec au DÉBUT de la
+ *     manche doit d'abord en sortir — tant qu'il l'est au début d'un sous-tour, tout coup qui ne le
+ *     sauve pas est annulé ('king-in-check'). Une fois sorti d'échec, plus d'obligation jusqu'à la
+ *     manche suivante. Un roi ne se capture jamais ('king-capture').
+ *  9. Échec et mat / pat : évalués UNIQUEMENT à la fin des `subTurns` coups, sur la position finale.
+ *     Un roi maté au 3e coup continue de jouer ses 4e et 5e coups avant le verdict.
+ * 10. Promotion automatique en cavalier, fou ou tour (tirage au sort). Pas de double pas, de roque
+ *     ni de prise en passant.
  */
 
 interface Validated {
@@ -63,12 +60,14 @@ export interface SubTurnResult {
   events: GameEvent[];
 }
 
-/** Résout un sous-tour. Ne modifie pas `state` : renvoie un nouvel état. */
+/** Résout un sous-tour. Ne modifie pas `state` : renvoie un nouvel état. Ne juge pas la fin de partie. */
 export function resolveSubTurn(
   state: GameState,
   subTurn: number,
   actions: QueuedAction[],
-  rules: RulesConfig = DEFAULT_RULES,
+  rnd: () => number = Math.random,
+  /** Couleurs qui doivent d'abord sortir d'échec à ce sous-tour. */
+  escape: ReadonlySet<Color> = new Set(),
 ): SubTurnResult {
   const events: GameEvent[] = [{ kind: 'sub-turn-start', subTurn }];
   const next = cloneState(state);
@@ -88,12 +87,6 @@ export function resolveSubTurn(
   const cancel = (a: QueuedAction, reason: CancelReason) =>
     events.push({ kind: 'cancelled', subTurn, pieceId: a.pieceId, owner: a.owner, to: a.to, reason });
 
-  const checkCache = new Map<Color, boolean>();
-  const inCheck = (c: Color) => {
-    if (!checkCache.has(c)) checkCache.set(c, isInCheck(state.pieces, size, c));
-    return checkCache.get(c)!;
-  };
-
   const validated: Validated[] = [];
   const acted = new Set<string>();
   const claimed = new Set<string>(); // `${color}:${destKey}` — conflits entre alliés
@@ -104,18 +97,11 @@ export function resolveSubTurn(
     if (piece.color !== a.owner) { cancel(a, 'not-owner'); continue; }
     if (acted.has(piece.id)) { cancel(a, 'already-acted'); continue; }
 
-    const dir = piece.color === 'white' ? 1 : -1;
-    const startRank = piece.color === 'white' ? 1 : size - 2;
-    const check = checkMove(snap, piece, a.to, startRank, dir);
+    const check = checkMove(snap, piece, a.to, piece.color === 'white' ? 1 : -1);
     if (!check.ok) { cancel(a, check.reason); continue; }
-
     // Un roi ne se capture jamais : on le met échec et mat.
     if (check.capture && snap.at(a.to)?.type === 'K') { cancel(a, 'king-capture'); continue; }
-
-    // Règle d'échec : roi en échec au début du sous-tour => seul un coup qui le sauve est légal.
-    if (((rules.strictKingSafety ?? true) || inCheck(piece.color)) && !keepsKingSafe(state.pieces, size, piece, a.to)) {
-      cancel(a, 'king-in-check'); continue;
-    }
+    if (escape.has(piece.color) && !keepsKingSafe(state.pieces, size, piece, a.to)) { cancel(a, 'king-in-check'); continue; }
 
     const claim = `${piece.color}:${sqKey(a.to, size)}`;
     if (claimed.has(claim)) { cancel(a, 'ally-conflict'); continue; }
@@ -145,13 +131,13 @@ export function resolveSubTurn(
 
   const removed = new Set<string>();
   const landing = new Map<string, Square>(); // pièces qui finissent leur déplacement
-  const moveOrder: Validated[] = [];
 
   for (const k of [...byDest.keys()].sort((a, b) => a - b)) {
     const arrivals = byDest.get(k)!;
     const at = arrivals[0]!.to;
     const stayerId = state.grid[k];
     const stayer = stayerId && !moverIds.has(stayerId) ? byId.get(stayerId) : undefined;
+    const power = (m: Validated) => STRENGTH[m.piece.type];
 
     if (arrivals.length === 1) {
       const m = arrivals[0]!;
@@ -160,20 +146,17 @@ export function resolveSubTurn(
         events.push({ kind: 'capture', subTurn, attackerId: m.piece.id, victimId: stayer.id, at });
       }
       landing.set(m.piece.id, at);
-      moveOrder.push(m);
       continue;
     }
 
-    // Collision : au plus un arrivant par camp (garanti par 'ally-conflict').
-    const val = (m: Validated) => rules.collisionValue[m.piece.type];
-    const best = Math.max(...arrivals.map(val));
-    const winners = arrivals.filter((m) => val(m) === best);
+    // Deux mouvants adverses (au plus un par camp : 'ally-conflict' / 'friendly-occupied').
+    const best = Math.max(...arrivals.map(power));
+    const winners = arrivals.filter((m) => power(m) === best);
     const pieceIds = arrivals.map((m) => m.piece.id);
     if (winners.length === 1) {
       const w = winners[0]!;
       for (const m of arrivals) if (m !== w) removed.add(m.piece.id);
       landing.set(w.piece.id, at);
-      moveOrder.push(w);
       events.push({ kind: 'collision', subTurn, at, pieceIds, winnerId: w.piece.id });
     } else {
       for (const m of arrivals) removed.add(m.piece.id);
@@ -182,51 +165,52 @@ export function resolveSubTurn(
   }
 
   // --- Étape 4 : application simultanée ---------------------------------------
-  for (const m of moveOrder) {
-    events.push({ kind: 'move', subTurn, pieceId: m.piece.id, from: m.from, to: m.to });
-  }
+  // Tous les mouvants glissent jusqu'à leur case (même ceux qui y périssent) avant l'impact.
+  for (const m of moves) events.push({ kind: 'move', subTurn, pieceId: m.piece.id, from: m.from, to: m.to });
   next.pieces = next.pieces.filter((p) => !removed.has(p.id));
   for (const p of next.pieces) {
     const dest = landing.get(p.id);
     if (!dest) continue;
     p.pos = { ...dest };
-    p.hasMoved = true;
     const lastRank = p.color === 'white' ? size - 1 : 0;
     if (p.type === 'P' && p.pos.rank === lastRank) {
-      p.type = 'Q';
-      events.push({ kind: 'promotion', subTurn, pieceId: p.id, at: p.pos });
+      p.type = PROMOTIONS[Math.floor(rnd() * PROMOTIONS.length)]!;
+      events.push({ kind: 'promotion', subTurn, pieceId: p.id, at: p.pos, to: p.type });
     }
   }
   rebuildGrid(next);
 
-  // --- Étape 5 : fin de partie -------------------------------------------------
-  const outcome = gameOutcome(next.pieces, size);
-  if (outcome?.reason !== 'checkmate') {
-    for (const c of ['white', 'black'] as const) {
-      if (isInCheck(next.pieces, size, c)) events.push({ kind: 'check', subTurn, color: c });
-    }
-  }
-  if (outcome) {
-    next.winner = outcome.winner;
-    events.push({ kind: 'game-over', subTurn, winner: outcome.winner, reason: outcome.reason });
+  for (const c of ['white', 'black'] as const) {
+    if (isInCheck(next.pieces, size, c)) events.push({ kind: 'check', subTurn, color: c });
   }
   return { state: next, events };
 }
 
-/** Résout toute la Séquence (tous les sous-tours) à partir de la file d'actions. */
+/** Résout toute la Séquence : tous les sous-tours, puis le verdict (mat / pat) sur la position finale. */
 export function resolveSequence(
   state: GameState,
   queue: ActionQueue,
   rules: RulesConfig = DEFAULT_RULES,
+  rnd: () => number = Math.random,
 ): SubTurnResult {
   let current = state;
-  const events: GameEvent[] = [];
-  for (let t = 0; t < rules.subTurns && current.winner === null; t++) {
-    const res = resolveSubTurn(current, t, queue.filter((a) => a.subTurn === t), rules);
+  let events: GameEvent[] = [];
+  // Obligation de sortir d'échec : posée par la position de DÉBUT de manche, levée dès que le roi en sort.
+  let obliged = (['white', 'black'] as const).filter((c) => isInCheck(state.pieces, state.size, c));
+  for (let t = 0; t < rules.subTurns; t++) {
+    obliged = obliged.filter((c) => isInCheck(current.pieces, current.size, c));
+    const res = resolveSubTurn(current, t, queue.filter((a) => a.subTurn === t), rnd, new Set(obliged));
     current = res.state;
     events.push(...res.events);
   }
-  current = { ...current, sequence: current.sequence + 1 };
+  const last = rules.subTurns - 1;
+  const outcome = gameOutcome(current.pieces, current.size);
+  if (outcome) {
+    // Le mat est annoncé par la fin de partie, pas par un simple "échec".
+    if (outcome.reason === 'checkmate') events = events.filter((e) => !(e.kind === 'check' && e.subTurn === last));
+    events.push({ kind: 'game-over', subTurn: last, winner: outcome.winner, reason: outcome.reason });
+  }
+  current = { ...current, sequence: current.sequence + 1, winner: outcome?.winner ?? null };
   return { state: current, events };
 }
 
@@ -235,6 +219,7 @@ export function resolvePlans(
   state: GameState,
   plans: Record<Color, Plan>,
   rules: RulesConfig = DEFAULT_RULES,
+  rnd: () => number = Math.random,
 ): SubTurnResult {
-  return resolveSequence(state, buildQueue(plans), rules);
+  return resolveSequence(state, buildQueue(plans), rules, rnd);
 }

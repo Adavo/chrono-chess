@@ -29,8 +29,8 @@ export function replaySteps(start: GameState, events: GameEvent[]): ReplayStep[]
     for (const e of evs) {
       const p = next.pieces.find((q) => q.id === (e.kind === 'move' || e.kind === 'promotion' ? e.pieceId : ''));
       if (!p) continue;
-      if (e.kind === 'move') { p.pos = { ...e.to }; p.hasMoved = true; }
-      if (e.kind === 'promotion') p.type = 'Q';
+      if (e.kind === 'move') p.pos = { ...e.to };
+      if (e.kind === 'promotion') p.type = e.to;
     }
     rebuildGrid(next);
     const over = evs.find((e) => e.kind === 'game-over');

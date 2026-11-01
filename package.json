@@ -1,9 +1,9 @@
 {
   "name": "chrono-chess",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Chrono Chess : échecs à programmation simultanée et temps discret",
+  "description": "Chrono Chess : mini-échecs 5x5, 5 coups programmés en secret et résolus en même temps",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

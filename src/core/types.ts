@@ -1,5 +1,5 @@
 /**
- * Structures de données de Chrono Chess.
+ * Structures de données de Chrono Chess (plateau 5x5, 5 coups programmés par manche).
  * Tout est sérialisable en JSON (utile pour le réseau et les replays).
  */
 
@@ -18,9 +18,16 @@ export interface PieceState {
   type: PieceType;
   color: Color;
   pos: Square;
-  /** Sert au pion (double pas initial) ; mis à jour par la résolution. */
-  hasMoved: boolean;
 }
+
+/**
+ * Force d'une pièce : quand deux pièces ennemies ARRIVENT ensemble sur la même case, la plus forte reste.
+ * Roi > (Dame, promotion) > Tour > Cavalier > Fou > Pion.
+ */
+/** Pièces possibles à la promotion : tirée au hasard. */
+export const PROMOTIONS: PieceType[] = ['N', 'B', 'R'];
+
+export const STRENGTH: Record<PieceType, number> = { P: 1, B: 2, N: 3, R: 5, Q: 9, K: 100 };
 
 /**
  * État complet de la partie entre deux Séquences.
@@ -65,13 +72,13 @@ export type ActionQueue = QueuedAction[];
 // ---------------------------------------------------------------------------
 
 export type CancelReason =
-  | 'piece-not-found' // la pièce a été capturée avant ce sous-tour
+  | 'piece-not-found' // la pièce a été détruite avant ce sous-tour
   | 'not-owner'
   | 'already-acted' // la pièce a déjà une action ce sous-tour
   | 'no-move' // destination = case actuelle
   | 'out-of-bounds'
   | 'illegal-geometry' // mouvement impossible depuis la position ACTUELLE
-  | 'path-blocked' // une pièce bloque la trajectoire
+  | 'path-blocked' // une pièce immobile bloque la trajectoire
   | 'friendly-occupied' // case occupée par un allié au début du sous-tour
   | 'blocked-forward' // pion bloqué devant lui
   | 'no-capture-target' // capture en diagonale d'un pion sans cible
@@ -85,30 +92,24 @@ export type GameEvent =
   | { kind: 'sub-turn-start'; subTurn: number }
   | { kind: 'move'; subTurn: number; pieceId: PieceId; from: Square; to: Square }
   | { kind: 'cancelled'; subTurn: number; pieceId: PieceId; owner: Color; to: Square; reason: CancelReason }
+  /** Un mouvant capture la pièce immobile qui occupait la case. */
   | { kind: 'capture'; subTurn: number; attackerId: PieceId; victimId: PieceId; at: Square }
+  /** Deux pièces arrivent ensemble sur la même case : `winnerId` (la plus forte) reste ; null = destruction mutuelle. */
   | { kind: 'collision'; subTurn: number; at: Square; pieceIds: PieceId[]; winnerId: PieceId | null }
-  | { kind: 'promotion'; subTurn: number; pieceId: PieceId; at: Square }
-  | { kind: 'check'; subTurn: number; color: Color } // le roi de `color` est en échec (sans être mat)
-  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw'; reason?: 'checkmate' | 'stalemate' | 'king-lost' };
+  | { kind: 'promotion'; subTurn: number; pieceId: PieceId; at: Square; to: PieceType }
+  | { kind: 'check'; subTurn: number; color: Color } // le roi de `color` est en échec à la fin de ce sous-tour
+  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw'; reason?: 'checkmate' | 'stalemate' | 'king-lost' | 'insufficient' };
 
 export interface RulesConfig {
   size: number;
+  /** Nombre de coups programmés par manche (la Séquence). */
   subTurns: number;
   /** Nombre max d'actions par joueur et par sous-tour (1 = un coup par sous-tour). */
   maxActionsPerSubTurn: number;
-  /**
-   * true (défaut) : règle des échecs classiques, aucun coup ne peut laisser ou mettre son roi en échec.
-   * false : seul un roi DÉJÀ en échec au début du sous-tour impose de parer l'échec.
-   */
-  strictKingSafety?: boolean;
-  /** Valeur d'une pièce lors d'une collision (arrivée simultanée sur la même case). */
-  collisionValue: Record<PieceType, number>;
 }
 
 export const DEFAULT_RULES: RulesConfig = {
-  size: 8,
-  subTurns: 3,
+  size: 5,
+  subTurns: 5,
   maxActionsPerSubTurn: 1,
-  collisionValue: { P: 1, N: 3, B: 3, R: 5, Q: 9, K: 100 },
-  strictKingSafety: true,
 };

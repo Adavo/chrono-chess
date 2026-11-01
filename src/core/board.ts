@@ -1,4 +1,4 @@
-import type { Color, GameState, PieceState, PieceType, Square } from './types';
+import { DEFAULT_RULES, type Color, type GameState, type PieceState, type PieceType, type Square } from './types';
 
 export const sqKey = (s: Square, size: number): number => s.rank * size + s.file;
 export const inBounds = (s: Square, size: number): boolean =>
@@ -14,17 +14,11 @@ export function rebuildGrid(state: GameState): void {
 /** Construit un état à partir d'une liste de pièces (tests, scénarios, puzzles). */
 export function createCustomState(
   pieces: Array<{ id: string; type: PieceType; color: Color; file: number; rank: number }>,
-  size = 8,
+  size = DEFAULT_RULES.size,
 ): GameState {
   const state: GameState = {
     size,
-    pieces: pieces.map((p) => ({
-      id: p.id,
-      type: p.type,
-      color: p.color,
-      pos: { file: p.file, rank: p.rank },
-      hasMoved: false,
-    })),
+    pieces: pieces.map((p) => ({ id: p.id, type: p.type, color: p.color, pos: { file: p.file, rank: p.rank } })),
     grid: [],
     sequence: 0,
     winner: null,
@@ -33,23 +27,27 @@ export function createCustomState(
   return state;
 }
 
-/** Position de départ des échecs classiques (8x8). */
+/**
+ * Position de départ 5x5 : Tour, Fou, Roi, Cavalier, Tour sur la dernière rangée,
+ * cinq pions devant. Les noirs sont placés dans les mêmes colonnes (face à face).
+ */
 export function createInitialState(): GameState {
-  const back: PieceType[] = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
+  const size = DEFAULT_RULES.size;
+  const back: PieceType[] = ['R', 'B', 'K', 'N', 'R'];
   const pieces: PieceState[] = [];
   const counters: Record<string, number> = {};
   const add = (type: PieceType, color: Color, file: number, rank: number) => {
     const prefix = `${color[0]}${type}`;
     const n = (counters[prefix] = (counters[prefix] ?? -1) + 1);
-    pieces.push({ id: `${prefix}${n}`, type, color, pos: { file, rank }, hasMoved: false });
+    pieces.push({ id: `${prefix}${n}`, type, color, pos: { file, rank } });
   };
-  for (let f = 0; f < 8; f++) {
+  for (let f = 0; f < size; f++) {
     add(back[f]!, 'white', f, 0);
     add('P', 'white', f, 1);
-    add('P', 'black', f, 6);
-    add(back[f]!, 'black', f, 7);
+    add('P', 'black', f, size - 2);
+    add(back[f]!, 'black', f, size - 1);
   }
-  const state: GameState = { size: 8, pieces, grid: [], sequence: 0, winner: null };
+  const state: GameState = { size, pieces, grid: [], sequence: 0, winner: null };
   rebuildGrid(state);
   return state;
 }

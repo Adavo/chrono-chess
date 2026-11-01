@@ -26,6 +26,10 @@ export function burst(layer: HTMLElement, x: number, y: number, color: string) {
 export const ring = (layer: HTMLElement, x: number, y: number, color: string) =>
   spawn(layer, 'ring', x, y, '', { '--c': color }, 800);
 
+/** Texte BD qui jaillit (POW!, CRASH!…). */
+export const shout = (layer: HTMLElement, x: number, y: number, text: string, color: string) =>
+  spawn(layer, 'float', x, y, text, { '--c': color }, 1100);
+
 /** Petit nuage de fumée + ✗ : le plan "fait pschitt". */
 export function puff(layer: HTMLElement, x: number, y: number) {
   const w = layer.clientWidth || 400;

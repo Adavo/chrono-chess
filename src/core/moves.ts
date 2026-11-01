@@ -44,24 +44,21 @@ export function pieceGeometry(type: Exclude<PieceType, 'P'>, dx: number, dy: num
  * occupe le plateau ? Sert à l'interface : on peut programmer un coup actuellement bloqué,
  * qui deviendra peut-être possible quand le moment venu.
  */
-export function geometryReachable(piece: PieceState, to: Square, size: number, startRank: number, dir: 1 | -1): boolean {
+export function geometryReachable(piece: PieceState, to: Square, size: number, dir: 1 | -1): boolean {
   if (!inBounds(to, size) || sameSquare(piece.pos, to)) return false;
   const dx = to.file - piece.pos.file;
   const dy = to.rank - piece.pos.rank;
-  if (piece.type === 'P') {
-    return (dx === 0 && dy === dir)
-      || (dx === 0 && dy === 2 * dir && piece.pos.rank === startRank && !piece.hasMoved)
-      || (Math.abs(dx) === 1 && dy === dir);
-  }
+  if (piece.type === 'P') return (dx === 0 && dy === dir) || (Math.abs(dx) === 1 && dy === dir);
   return pieceGeometry(piece.type, dx, dy).ok;
 }
 
 /**
  * Vérifie un déplacement depuis la position ACTUELLE de la pièce, sur l'instantané
  * du début de sous-tour. Aucune "réparation" : si c'est invalide, on renvoie la raison.
- * (La règle d'échec est appliquée à part, par la résolution : voir check.ts.)
+ * Collisions classiques : une pièce immobile (alliée ou ennemie) bloque les trajectoires.
+ * (Règle d'échec : voir check.ts.)
  */
-export function checkMove(snap: Snapshot, piece: PieceState, to: Square, startRank: number, dir: 1 | -1): MoveCheck {
+export function checkMove(snap: Snapshot, piece: PieceState, to: Square, dir: 1 | -1): MoveCheck {
   const from = piece.pos;
   if (!inBounds(to, snap.size)) return fail('out-of-bounds');
   if (sameSquare(from, to)) return fail('no-move');
@@ -72,10 +69,6 @@ export function checkMove(snap: Snapshot, piece: PieceState, to: Square, startRa
 
   if (piece.type === 'P') {
     if (dx === 0 && dy === dir) return occupant ? fail('blocked-forward') : { ok: true, capture: false };
-    if (dx === 0 && dy === 2 * dir && from.rank === startRank && !piece.hasMoved) {
-      const mid = { file: from.file, rank: from.rank + dir };
-      return snap.at(mid) || occupant ? fail('blocked-forward') : { ok: true, capture: false };
-    }
     if (Math.abs(dx) === 1 && dy === dir) {
       if (!occupant) return fail('no-capture-target');
       return occupant.color === piece.color ? fail('friendly-occupied') : { ok: true, capture: true };
