@@ -52,7 +52,7 @@ input { background: var(--cream); color: var(--ink); border: 3px solid var(--ink
 /* --- Panneaux crème --- */
 .panel { background: var(--cream); color: var(--ink); text-shadow: none; border: 4px solid var(--ink); border-radius: 12px;
   box-shadow: inset 0 0 0 3px #fff6e8, inset 0 0 0 6px var(--cream-d), 0 6px 0 var(--ink); }
-.menu-card { margin-top: 5vh; display: grid; gap: 12px; text-align: center; padding: 22px 18px 16px;
+.menu-card { margin-top: max(5vh, 84px); display: grid; gap: 12px; text-align: center; padding: 22px 18px 16px;
   background: var(--cream); color: var(--ink); text-shadow: none; border: 4px solid var(--ink); border-radius: 12px;
   box-shadow: inset 0 0 0 3px #fff6e8, inset 0 0 0 6px var(--cream-d), 0 3px 0 var(--ink); }
 .menu-card button { color: var(--cream); }
@@ -183,7 +183,7 @@ svg.crown { width: 24px; height: 16px; margin-right: 8px; fill: #ffd85e; vertica
 .modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 button.mode { display: flex; flex-direction: column; gap: 2px; align-items: center; padding: 8px 4px; margin: 0; }
 button.mode b { font-size: 1.15rem; font-weight: 400; }
-button.mode small { font-size: .85rem; opacity: .85; line-height: 1.05; }
+button.mode small { font-size: .85rem; opacity: .85; line-height: 1.05; text-wrap: balance; }
 /* Sélecteur de mode : la carte active est pleine avec un liseré doré et une pastille pleine ; l'autre n'est qu'un contour. */
 .menu-card button.mode { position: relative; padding: 10px 6px 8px; }
 .menu-card button.mode::before { content: '○'; position: absolute; top: 4px; left: 8px; font-size: 1rem; line-height: 1; }
@@ -191,6 +191,8 @@ button.mode small { font-size: .85rem; opacity: .85; line-height: 1.05; }
 .menu-card button.mode:not(.on):hover { background: #b35f6926; }
 .menu-card button.mode.on { background: var(--rose); color: var(--cream); border-color: #ffd85e; box-shadow: 0 0 0 3px var(--ink), 0 5px 0 3px var(--ink), 0 0 14px #ffd85e88; }
 .menu-card button.mode.on::before { content: '●'; color: #ffd85e; text-shadow: 1px 1px 0 var(--ink); }
+
+
 
 
 

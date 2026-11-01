@@ -5,7 +5,7 @@ export const LANGS: Lang[] = ['fr', 'en', 'zh'];
 
 const FR = {
   variant_classic: 'A · Classique', variant_single: 'B · Bluff',
-  variant_classic_desc: 'Coup par coup, {s} s par coup', variant_single_desc: 'Un coup secret simultané, {s} s',
+  variant_classic_desc: 'Coup par coup · {s} s', variant_single_desc: 'Secret et simultané · {s} s',
   your_turn: 'À vous de jouer', opp_turn: "Tour de l'adversaire", status_plan_one: 'Planifiez votre coup',
   level_title: 'Choisissez le niveau',
   level_easy: 'Facile', level_medium: 'Moyen', level_hard: 'Difficile', level_master: 'Grand Maître',
@@ -85,7 +85,7 @@ export type Key = keyof typeof FR;
 
 const EN: Record<Key, string> = {
   variant_classic: 'A · Classic', variant_single: 'B · Bluff',
-  variant_classic_desc: 'Turn by turn, {s} s per move', variant_single_desc: 'One secret simultaneous move, {s} s',
+  variant_classic_desc: 'Turn by turn · {s} s', variant_single_desc: 'Secret and simultaneous · {s} s',
   your_turn: 'Your move', opp_turn: "Opponent's turn", status_plan_one: 'Plan your move',
   level_title: 'Choose the difficulty',
   level_easy: 'Easy', level_medium: 'Medium', level_hard: 'Hard', level_master: 'Grandmaster',
@@ -163,7 +163,7 @@ const EN: Record<Key, string> = {
 
 const ZH: Record<Key, string> = {
   variant_classic: 'A · 经典', variant_single: 'B · 诈唬',
-  variant_classic_desc: '轮流走棋，每步{s}秒', variant_single_desc: '同时执行1步秘密棋步，{s}秒',
+  variant_classic_desc: '轮流走棋 · {s}秒', variant_single_desc: '秘密同步 · {s}秒',
   your_turn: '轮到你了', opp_turn: '对手的回合', status_plan_one: '规划你的棋步',
   level_title: '选择难度',
   level_easy: '简单', level_medium: '中等', level_hard: '困难', level_master: '特级大师',
