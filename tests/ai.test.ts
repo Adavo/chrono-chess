@@ -80,6 +80,12 @@ describe('IA du mode Bluff', () => {
     }
   });
 
+  it('joue toujours un coup quand elle en a un, même au niveau facile', () => {
+    for (const level of LEVELS) {
+      for (let i = 0; i < 40; i++) expect(aiPlan(createInitialState(), 'black', ONE, rng(i + 1), level)[0]).toHaveLength(1);
+    }
+  });
+
   it('IA contre IA : parties complètes sans position invalide', () => {
     const rnd = rng(13);
     let finished = 0;

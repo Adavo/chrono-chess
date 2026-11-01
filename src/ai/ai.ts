@@ -11,8 +11,8 @@ const VALUE = { P: 1, B: 2, N: 3, R: 5, Q: 9, K: 0 } as const;
 /** Réglages de l'IA « gloutonne » : poids des critères et part de hasard. */
 interface Style { noise: number; capture: number; danger: number; check: number; selfCheck: number; skip: number }
 const STYLES = {
-  // Joue au hasard (et laisse parfois passer un coup), ne voit ni les menaces ni les échecs.
-  easy: { noise: 30, capture: 0.1, danger: 0, check: 0, selfCheck: 0, skip: 0.3 },
+  // Joue presque au hasard (mais joue toujours), ne voit ni les menaces ni les échecs.
+  easy: { noise: 30, capture: 0.1, danger: 0, check: 0, selfCheck: 0, skip: 0 },
   // Capture, protège ses pièces, cherche l'échec.
   medium: { noise: 1.5, capture: 1, danger: 1, check: 1, selfCheck: 1, skip: 0 },
   // Base des plans candidats de la recherche (niveaux difficile et Grand Maître).
