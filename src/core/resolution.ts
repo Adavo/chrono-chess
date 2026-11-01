@@ -1,4 +1,4 @@
-import { cloneState, rebuildGrid, sqKey } from './board';
+import { cloneState, rebuildGrid, sameSquare, sqKey } from './board';
 import { gameOutcome, isInCheck, keepsKingSafe } from './check';
 import { checkMove, type Snapshot } from './moves';
 import { buildQueue } from './plan';
@@ -35,7 +35,8 @@ import {
  *     de même force s'annulent.
  *  6. Une case alliée occupée au début du sous-tour bloque, même si l'allié part ; deux alliés
  *     visant la même case : le premier de la file passe, l'autre est caduc.
- *  7. Capture en diagonale d'un pion : annulée si la cible a une action valide (elle part).
+ *  7. Capture en diagonale d'un pion : annulée si la cible a une action valide (elle part). Exception : si la cible
+ *     est un pion qui capture en retour (prise commune), les deux pions se percutent et sont détruits (choc).
  *  8. Échec : pendant les coups d'une manche, on bouge LIBREMENT (on peut exposer son roi en déplaçant
  *     une autre pièce), sauf que le ROI ne peut jamais aller sur une case attaquée ('king-attacked').
  *     Autre exception : un roi déjà en échec au DÉBUT de la
@@ -118,14 +119,23 @@ export function resolveSubTurn(
 
   // --- Étape 2 : capture de pion dont la cible est partie ---------------------
   const departing = new Set(validated.map((v) => v.piece.id)); // calculé AVANT annulation
+  const pawnCapture = (v: Validated) => v.piece.type === 'P' && v.capture;
+  // Prise commune : deux pions se capturent l'un l'autre. Plutôt qu'annuler les deux coups, ils se percutent.
+  const crashing = new Set<Validated>();
+  for (const a of validated) {
+    if (!pawnCapture(a) || crashing.has(a)) continue;
+    const b = validated.find((v) => v !== a && pawnCapture(v) && sameSquare(v.to, a.from) && sameSquare(a.to, v.from));
+    if (b && snap.at(a.to)?.type === 'P') { crashing.add(a); crashing.add(b); }
+  }
   const moves = validated.filter((v) => {
-    if (v.piece.type === 'P' && v.capture) {
+    if (crashing.has(v)) return false;
+    if (pawnCapture(v)) {
       const target = snap.at(v.to);
       if (target && departing.has(target.id)) { cancel(v.action, 'target-moved'); return false; }
     }
     return true;
   });
-  const moverIds = new Set(moves.map((m) => m.piece.id));
+  const moverIds = new Set([...moves, ...crashing].map((m) => m.piece.id));
 
   // --- Étape 3 : résolution par case d'arrivée --------------------------------
   const byDest = new Map<number, Validated[]>();
@@ -169,9 +179,17 @@ export function resolveSubTurn(
     }
   }
 
+  // Prises communes : les deux pions glissent l'un vers l'autre et se détruisent, choc sur la case du premier.
+  const crashList = [...crashing];
+  for (let i = 0; i < crashList.length; i += 2) {
+    const [a, b] = [crashList[i]!, crashList[i + 1]!];
+    removed.add(a.piece.id); removed.add(b.piece.id);
+    events.push({ kind: 'collision', subTurn, at: a.to, pieceIds: [a.piece.id, b.piece.id], winnerId: null });
+  }
+
   // --- Étape 4 : application simultanée ---------------------------------------
   // Tous les mouvants glissent jusqu'à leur case (même ceux qui y périssent) avant l'impact.
-  for (const m of moves) events.push({ kind: 'move', subTurn, pieceId: m.piece.id, from: m.from, to: m.to });
+  for (const m of [...moves, ...crashing]) events.push({ kind: 'move', subTurn, pieceId: m.piece.id, from: m.from, to: m.to });
   next.pieces = next.pieces.filter((p) => !removed.has(p.id));
   const asked = new Map(moves.map((m) => [m.piece.id, m.action.promo]));
   for (const p of next.pieces) {

@@ -14,7 +14,7 @@ Mini-échecs **5×5** avec deux modes de jeu, choisis sur l'accueil (contre l'IA
 ## Règles
 - Départ : Tour, Fou, Roi, Cavalier, Tour + 5 pions par camp. Le pion avance d'une case et capture en diagonale ; promotion tirée au sort (cavalier, fou ou tour).
 - **A · Classique** : règles d'échecs usuelles — trajectoires bloquées, la pièce qui bouge capture, aucun coup ne laisse son roi en échec.
-- **B · Bluff** : trajectoires bloquées par les pièces immobiles ; deux pièces qui **bougent** en même temps se croisent sans rien se faire. Si deux pièces ennemies **arrivent** sur la même case, la **plus forte reste** — Roi > Tour > Cavalier > Fou > Pion — et deux pièces de même force s'annulent. Le roi ne peut jamais aller sur une case attaquée, et un roi en échec doit d'abord en sortir.
+- **B · Bluff** : trajectoires bloquées par les pièces immobiles ; deux pièces qui **bougent** en même temps se croisent sans rien se faire. Si deux pièces ennemies **arrivent** sur la même case, la **plus forte reste** — Roi > Tour > Cavalier > Fou > Pion — et deux pièces de même force s'annulent. Deux pions qui se capturent l'un l'autre se percutent : les deux sont détruits. Le roi ne peut jamais aller sur une case attaquée, et un roi en échec doit d'abord en sortir.
 - Match nul : pat, deux rois seuls (ou un seul cavalier / fou en plus : aucun mat possible), et — en mode classique — la même position trois fois.
 
 Détail dans [`src/core/classic.ts`](src/core/classic.ts) (mode A) et le commentaire en tête de [`src/core/resolution.ts`](src/core/resolution.ts) (mode B).

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createCustomState, createInitialState } from '../src/core/board';
+import { replaySteps } from '../src/core/replay';
 import { resolvePlans } from '../src/core/resolution';
 import { Game } from '../src/core/sequence';
 import { DEFAULT_RULES, type Color, type GameEvent, type PieceType, type Plan } from '../src/core/types';
@@ -128,6 +129,29 @@ describe('pièces en mouvement : elles se croisent sans rien se faire', () => {
     const s = createCustomState([...kings, { id: 'wP', type: 'P', color: 'white', file: 1, rank: 2 }, { id: 'bP', type: 'P', color: 'black', file: 2, rank: 3 }]);
     const r = resolvePlans(s, plans(plan(act('wP', 2, 3)), plan(act('bP', 2, 2))));
     expect(cancelled(r.events)[0]?.reason).toBe('target-moved');
+  });
+});
+
+describe('prise commune de deux pions : ils se percutent', () => {
+  const duel = () => createCustomState([...kings, { id: 'wP', type: 'P', color: 'white', file: 1, rank: 2 }, { id: 'bP', type: 'P', color: 'black', file: 2, rank: 3 }]);
+
+  it("chacun capture l'autre : choc, les deux pions sont détruits, aucun coup caduc", () => {
+    const r = resolvePlans(duel(), plans(plan(act('wP', 2, 3)), plan(act('bP', 1, 2))));
+    expect(cancelled(r.events)).toHaveLength(0);
+    expect(r.events.filter((e) => e.kind === 'collision')).toMatchObject([{ winnerId: null, pieceIds: ['wP', 'bP'] }]);
+    expect(find(r.state, 'wP')).toBeUndefined();
+    expect(find(r.state, 'bP')).toBeUndefined();
+  });
+
+  it('un pion qui capture une cible qui ne riposte pas en diagonale reste caduc', () => {
+    const r = resolvePlans(duel(), plans(plan(act('wP', 2, 3)), plan(act('bP', 2, 2))));
+    expect(cancelled(r.events)[0]?.reason).toBe('target-moved');
+  });
+
+  it('le rejeu des événements donne le même état final', () => {
+    const start = duel();
+    const res = resolvePlans(start, plans(plan(act('wP', 2, 3)), plan(act('bP', 1, 2))));
+    expect(replaySteps(start, res.events)[0]!.state.pieces.map((p) => p.id).sort()).toEqual(['bK', 'wK']);
   });
 });
 

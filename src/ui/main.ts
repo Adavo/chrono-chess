@@ -35,7 +35,6 @@ const CELL = 100 / SIZE; // largeur d'une case, en % du plateau
 const PLAN_SECONDS = 5; // temps pour jouer son coup (dans les deux modes)
 const LOW_MS = PLAN_SECONDS * 400; // dernière partie du chrono : barre rouge et tic-tac
 const STEP_MS = 1100; // durée d'un sous-tour à l'écran
-const SUB_COLORS = ['#7ad7ff', '#ffd85e', '#ff8fd0', '#8dff9a', '#ffa05e'];
 const DRAG_THRESHOLD = 6; // px avant qu'un appui devienne un glisser
 const FILES = 'abcde';
 const pieceName = (p: PieceType) => t(`piece_${p}` as Key);
@@ -71,7 +70,6 @@ let finishing = false;
 /** Identifie la résolution en cours : l'incrémenter annule ses animations différées (quitter, nouvelle partie). */
 let runId = 0;
 const FINISH_DELAY_MS = 1000;
-let currentStep = -1; // sous-tour affiché pendant la résolution
 let timer: number | undefined;
 let logLines: LogLine[] = [];
 let planBase: GameState = state; // position au début de la Séquence
@@ -258,16 +256,15 @@ function buildGame() {
         <div class="banner" id="banner" hidden></div>
       </div>
     </div>
-    <div class="slots ${SUBS === 1 ? 'one' : ''}" id="slots" style="--n:${SUBS}"></div>
-    <div class="row actions" id="actions"><button class="primary" id="ok">${t('finish')}</button></div>`;
+    <div class="row actions" id="actions" hidden><button class="primary" id="ok">${t('see_result')}</button></div>`;
   boardEl = $('board'); piecesEl = $('pieces'); fxEl = $('fx');
 
   boardEl.addEventListener('pointerdown', onPointerDown);
   boardEl.addEventListener('pointermove', onPointerMove);
   boardEl.addEventListener('pointerup', onPointerUp);
   boardEl.addEventListener('pointercancel', () => endDrag(false, null));
-  // Partie terminée, le bouton rouvre la bannière de résultat ; sinon il envoie le plan sans attendre la fin du chrono.
-  $('ok').onclick = () => { if (state.winner) $('banner').hidden = false; else submit(); };
+  // Partie terminée : le bouton rouvre la bannière de résultat.
+  $('ok').onclick = () => { $('banner').hidden = false; };
   const soundBtn = $('gm-sound');
   const paintSound = () => soundIcon(soundBtn);
   paintSound();
@@ -414,25 +411,9 @@ function refreshPlanUi() {
     }
   }
 
-  // Cartes des coups
-  $('slots').hidden = variant === 'classic';
-  $('slots').innerHTML = variant === 'classic' ? '' : SUB_COLORS.slice(0, SUBS).map((color, i) => {
-    const a = plan[i]![0]; const piece = a && planBase.pieces.find((q) => q.id === a.pieceId);
-    const from = a && states[i]!.pieces.find((q) => q.id === a.pieceId)?.pos;
-    const body = a && piece
-      ? `<span class="mini ${piece.color[0]}">${pieceSvg(piece.type)}</span>${from
-        ? `<span>${sqName(from)}→${sqName(a.to)}</span>`
-        : `<span class="gone">${t('slot_gone')}</span>`}`
-      : `<span class="empty">${t('slot_empty')}</span>`;
-    return `<button class="slot ${i === activeSub && !busy ? 'active' : ''} ${currentStep === i ? 'now' : ''}" data-t="${i}" style="--c:${color}"><em>${i + 1}</em>${body}</button>`;
-  }).join('');
-  $('slots').querySelectorAll<HTMLElement>('.slot').forEach((el) => (el.onclick = () => {
-    if (!locked()) redoFrom(+el.dataset.t!);
-  }));
   // Partie finie : le bouton du bas permet de revoir le résultat, plateau visible.
-  $('actions').hidden = variant === 'classic' && !over; // en mode classique, le coup part dès qu'on le joue
-  $('ok').textContent = over ? t('see_result') : t('finish');
-  ($('ok') as HTMLButtonElement).disabled = over ? busy : locked();
+  $('actions').hidden = !over; // le coup part tout seul (dès qu'il est joué, ou à la fin du chrono) : le bouton ne sert qu'à revoir le résultat
+  ($('ok') as HTMLButtonElement).disabled = busy;
 }
 
 /** Redessine le journal (seulement quand il change, pas à chaque rafraîchissement du plateau). */
@@ -461,15 +442,6 @@ function isLegalTarget(view: GameState, p: PieceState, to: Square, first: boolea
 }
 
 const sqEl = (s: Square) => document.querySelector<HTMLElement>(`.sq[data-f="${s.file}"][data-r="${s.rank}"]`);
-
-/** Supprime le coup `t` et tous les suivants, pour les refaire (jamais au-delà du premier trou). */
-function redoFrom(t: number) {
-  const firstEmpty = plan.findIndex((a) => a.length === 0);
-  const from = Math.min(t, firstEmpty < 0 ? SUBS : firstEmpty);
-  for (let i = from; i < SUBS; i++) plan[i] = [];
-  activeSub = Math.min(from, SUBS - 1); viewAt = activeSub; selected = null;
-  refreshPlanUi();
-}
 
 /** Enregistre le coup du sous-tour actif : la pièce se déplace à l'écran. */
 function place(id: string, to: Square) {
@@ -583,7 +555,7 @@ function defer(fn: () => void, ms: number) {
 
 function startPlanning() {
   plan = emptyPlan(); activeSub = 0; viewAt = 0; selected = null; drag = null;
-  submitted = false; busy = false; finishing = false; currentStep = -1;
+  submitted = false; busy = false; finishing = false;
   planBase = state;
   $('banner').hidden = true;
   aiThinking = mode === 'ai' ? thinkPlan(state, opp(me), rules, aiLevel) : null;
@@ -595,7 +567,7 @@ function startPlanning() {
 // --- Mode classique : un coup à la fois, chrono par coup ---------------------------------
 function startClassicTurn() {
   plan = emptyPlan(); activeSub = 0; viewAt = 0; selected = null; drag = null;
-  submitted = false; busy = false; finishing = false; currentStep = -1;
+  submitted = false; busy = false; finishing = false;
   planBase = state;
   $('banner').hidden = true;
   const mineToPlay = turnOf(state) === me;
@@ -683,7 +655,7 @@ function describe(e: GameEvent, before: GameState, stepEvents: GameEvent[]): Log
     case 'move': {
       const p = piece(e.pieceId);
       if (!p) return null;
-      const capture = stepEvents.some((x) => (x.kind === 'capture' && x.attackerId === p.id) || (x.kind === 'collision' && x.winnerId === p.id));
+      const capture = stepEvents.some((x) => (x.kind === 'capture' && x.attackerId === p.id) || (x.kind === 'collision' && (x.winnerId === p.id || (p.type === 'P' && e.to.file !== p.pos.file && x.pieceIds.includes(p.id)))));
       const promo = stepEvents.find((x) => x.kind === 'promotion' && x.pieceId === p.id);
       return { n, side: p.color, text: notate(p, e.to, before, capture, promo?.kind === 'promotion' ? promo.to : undefined), cls: capture ? 'cap' : undefined };
     }
@@ -738,7 +710,6 @@ function playResolution(events: GameEvent[], finalState: GameState) {
   const next = () => {
     const step = steps[i++];
     if (!step) { later(finish, classic ? 250 : 700); return; }
-    currentStep = step.subTurn;
     const before = state;
     for (const e of step.events) { const d = describe(e, before, step.events); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
     renderLog();
@@ -790,7 +761,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     later(next, stepMs);
   };
   const finish = () => {
-    state = finalState; busy = false; currentStep = -1;
+    state = finalState; busy = false;
     syncPieces(state.pieces); refreshPlanUi();
     if (state.winner) {
       const ban = $('banner'); const won = state.winner === me;
