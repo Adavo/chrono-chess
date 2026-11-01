@@ -7,6 +7,9 @@
  */
 export const VERSION_LABEL = `v${__APP_VERSION__} · ${__APP_SHA__} · ${__APP_DATE__}${import.meta.env.DEV ? ' · dev' : ''}`;
 
+/** Numéro de version et date, affichés en bas à gauche de l'accueil. */
+export const VERSION_SHORT = `v${__APP_VERSION__} · ${__APP_DATE__}`;
+
 const RELOAD_KEY = 'chrono-reloaded-for';
 
 /** Vide le Cache Storage (s'il existe) puis recharge avec une adresse que le navigateur n'a jamais vue. */

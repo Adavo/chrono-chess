@@ -1,5 +1,5 @@
 import './style.css';
-import { aiPlan } from '../ai/ai';
+import { aiPlan, LEVELS, type Level } from '../ai/ai';
 import { createInitialState, sameSquare } from '../core/board';
 import { gameOutcome, isInCheck, keepsKingSafe } from '../core/check';
 import { checkMove, geometryReachable } from '../core/moves';
@@ -10,8 +10,9 @@ import { DEFAULT_RULES, type CancelReason, type Color, type GameEvent, type Game
 import { dropPeer, host, join, type Conn } from '../net/peer';
 import type { GuestToHost, HostToGuest } from '../net/transport';
 import { burst, isMuted, puff, ring, setMuted, sfx, shout, unlockAudio } from './fx';
+import { flagSvg, getLang, nextLang, setLang, t, type Key } from './i18n';
 import { pieceSvg } from './pieces';
-import { VERSION_LABEL, checkForUpdate, hardReload } from './version';
+import { VERSION_SHORT, checkForUpdate } from './version';
 
 const SIZE = DEFAULT_RULES.size;
 const SUBS = DEFAULT_RULES.subTurns;
@@ -21,20 +22,17 @@ const STEP_MS = 1100; // durée d'un sous-tour à l'écran
 const SUB_COLORS = ['#7ad7ff', '#ffd85e', '#ff8fd0', '#8dff9a', '#ffa05e'];
 const DRAG_THRESHOLD = 6; // px avant qu'un appui devienne un glisser
 const FILES = 'abcde';
-const NAMES: Record<PieceType, string> = { K: 'Roi', Q: 'Dame', R: 'Tour', B: 'Fou', N: 'Cavalier', P: 'Pion' };
-const REASONS: Record<CancelReason, string> = {
-  'piece-not-found': 'la pièce a été détruite', 'not-owner': 'pièce adverse', 'already-acted': 'déjà jouée',
-  'no-move': 'pas de déplacement', 'out-of-bounds': 'hors plateau', 'illegal-geometry': 'impossible depuis sa position réelle',
-  'path-blocked': 'trajectoire bloquée', 'friendly-occupied': 'case alliée', 'blocked-forward': 'pion bloqué', 'no-capture-target': 'rien à capturer',
-  'target-moved': 'la cible est partie', 'ally-conflict': 'un allié visait la même case',
-  'king-in-check': "le roi doit d'abord sortir d'échec", 'king-capture': 'on ne capture pas un roi : on le met mat',
-};
+const pieceName = (p: PieceType) => t(`piece_${p}` as Key);
+const reasonText = (r: CancelReason) => t(`reason_${r}` as Key);
+/** Codes d'erreur du transport réseau -> texte dans la langue courante. */
+const errText = (code: string) => ({ 'no-peerjs': t('err_nopeer'), 'code-not-found': t('err_notfound'), timeout: t('err_timeout') } as Record<string, string>)[code] ?? code;
 
 const app = document.getElementById('app')!;
 type Mode = 'ai' | 'host' | 'guest';
 
 // --- État de l'application ---------------------------------------------------
 let mode: Mode = 'ai';
+let aiLevel: Level = 'medium';
 let me: Color = 'white';
 let state: GameState = createInitialState();
 let game: Game | null = null; // autoritaire : IA et hôte seulement
@@ -51,7 +49,7 @@ let submitted = false;
 let busy = false;
 let currentStep = -1; // sous-tour affiché pendant la résolution
 let timer: number | undefined;
-let logLines: { text: string; cls?: string }[] = [];
+let logLines: LogLine[] = [];
 let planBase: GameState = state; // position au début de la Séquence
 let endReason: string | undefined; // raison de fin de partie (mat, pat) pour la bannière
 let drag: { id: string; x: number; y: number; active: boolean; pointerId: number } | null = null;
@@ -74,34 +72,63 @@ window.addEventListener('pointerdown', unlockAudio);
 const rulesLegend = (cls = '') => `<div class="rules ${cls}">${(['K', 'R', 'N', 'B', 'P'] as PieceType[])
   .map((t) => `<span class="mini w">${pieceSvg(t)}</span>`).join('<i>&gt;</i>')}</div>`;
 
+// --- Pied de page des menus : version (gauche), drapeau de langue (droite) ------
+const foot = document.createElement('footer');
+foot.id = 'foot';
+document.body.appendChild(foot);
+
+/** Affiche le pied de page ; `redraw` redessine l'écran courant quand on change de langue. `null` = masqué. */
+function showFoot(redraw: (() => void) | null) {
+  foot.hidden = !redraw;
+  if (!redraw) return;
+  foot.innerHTML = `<span class="version">${VERSION_SHORT}</span><button class="flag" id="lang" title="Language">${flagSvg(getLang())}</button>`;
+  $('lang').onclick = () => { setLang(nextLang()); redraw(); };
+}
+
 // --- Menus -------------------------------------------------------------------
 function showMenu(msg = '') {
   clearInterval(timer); dropPeer(); conn = null; game = null; busy = false;
   app.innerHTML = `<section class="menu-card">
     <div class="logo"><span class="piece-logo mini w">${pieceSvg('K')}</span><h1>Chrono Chess</h1></div>
-    <p class="tagline">Programmez <b>${SUBS} coups</b> en secret. Ils se jouent <b>tous en même temps</b>.</p>
+    <p class="tagline">${t('tagline', { n: SUBS })}</p>
     ${rulesLegend()}
-    <p class="hint">Si deux pièces arrivent sur la même case, la plus forte reste.</p>
+    <p class="hint">${t('rule')}</p>
     ${msg ? `<p class="error">${msg}</p>` : ''}
-    <button class="primary" id="ai">Jouer contre l'IA</button>
-    <button id="host">Créer une partie en ligne</button>
-    <div class="row"><input id="code" placeholder="CODE" maxlength="5" autocomplete="off" /><button id="join">Rejoindre</button></div>
-    <p class="version">${VERSION_LABEL} · <button class="link" id="refresh" title="Vide le cache et recharge la page">↻ Actualiser</button></p>
+    <button class="primary" id="ai">${t('play_ai')}</button>
+    <button id="host">${t('host_btn')}</button>
+    <div class="row"><input id="code" placeholder="${t('code_ph')}" maxlength="5" autocomplete="off" /><button id="join">${t('join_btn')}</button></div>
   </section>`;
-  $('ai').onclick = () => { mode = 'ai'; me = 'white'; game = new Game(createInitialState()); state = game.state; buildGame(); startPlanning(); };
+  showFoot(() => showMenu());
+  $('ai').onclick = showLevels;
   $('host').onclick = showHost;
-  $('refresh').onclick = () => void hardReload();
   $('join').onclick = () => showJoin(($('code') as HTMLInputElement).value.trim());
 }
 
+/** Second menu : niveau de l'IA. */
+function showLevels() {
+  app.innerHTML = `<section class="menu-card">
+    <h1 class="small">${t('level_title')}</h1>
+    ${LEVELS.map((l) => `<button class="${l === 'master' ? 'primary' : ''} level" data-level="${l}"><b>${t(`level_${l}` as Key)}</b><small>${t(`level_${l}_desc` as Key)}</small></button>`).join('')}
+    <button id="back">${t('back')}</button>
+  </section>`;
+  showFoot(showLevels);
+  document.querySelectorAll<HTMLElement>('[data-level]').forEach((b) => (b.onclick = () => {
+    aiLevel = b.dataset.level as Level;
+    mode = 'ai'; me = 'white'; game = new Game(createInitialState()); state = game.state;
+    buildGame(); startPlanning();
+  }));
+  $('back').onclick = () => showMenu();
+}
+
 function showHost() {
-  app.innerHTML = `<section class="menu-card"><h1 class="small">Partie en ligne</h1><p>Donnez ce code à votre adversaire <span class="hint">(cliquer pour copier)</span></p>
-    <div class="code" id="c">· · · · ·</div><p id="st" class="hint">Création…</p><button id="back">Annuler</button></section>`;
+  showFoot(null);
+  app.innerHTML = `<section class="menu-card"><h1 class="small">${t('online_title')}</h1><p>${t('give_code')} <span class="hint">${t('click_copy')}</span></p>
+    <div class="code" id="c">· · · · ·</div><p id="st" class="hint">${t('creating')}</p><button id="back">${t('cancel')}</button></section>`;
   $('back').onclick = () => showMenu();
   host(
     (code) => {
-      $('c').textContent = code; $('st').textContent = "En attente de l'adversaire…";
-      $('c').onclick = () => navigator.clipboard?.writeText(code).then(() => ($('st').textContent = 'Code copié !'));
+      $('c').textContent = code; $('st').textContent = t('waiting_opp');
+      $('c').onclick = () => navigator.clipboard?.writeText(code).then(() => ($('st').textContent = t('copied')));
     },
     (c) => {
       mode = 'host'; me = 'white'; conn = c; game = new Game(createInitialState()); state = game.state;
@@ -110,29 +137,31 @@ function showHost() {
         game.submitPlan('black', m.plan);
         if (submitted) hostResolve();
       };
-      c.onclose = () => showMenu("Connexion perdue avec l'adversaire.");
+      c.onclose = () => showMenu(t('lost_opp'));
       c.send({ t: 'start', color: 'black', state } satisfies HostToGuest);
       buildGame(); startPlanning();
     },
-    (e) => showMenu(e),
+    (e) => showMenu(errText(e)),
   );
 }
 
 function showJoin(code: string) {
-  if (code.length < 5) return showMenu('Entrez un code à 5 caractères.');
-  app.innerHTML = `<section class="menu-card"><h1 class="small">Connexion…</h1><div class="code">${code.toUpperCase()}</div></section>`;
+  if (code.length < 5) return showMenu(t('enter_code'));
+  showFoot(null);
+  app.innerHTML = `<section class="menu-card"><h1 class="small">${t('connecting')}</h1><div class="code">${code.toUpperCase()}</div></section>`;
   join(code, (c) => {
     mode = 'guest'; me = 'black'; conn = c;
     c.onmsg = (m: HostToGuest) => {
       if (m.t === 'start') { state = m.state; buildGame(); startPlanning(); }
       if (m.t === 'resolved') playResolution(m.events, m.state);
     };
-    c.onclose = () => showMenu("Connexion perdue avec l'hôte.");
-  }, (e) => showMenu(e));
+    c.onclose = () => showMenu(t('lost_host'));
+  }, (e) => showMenu(errText(e)));
 }
 
 // --- Construction de l'écran de jeu ------------------------------------------
 function buildGame() {
+  showFoot(null);
   pieceEls.clear(); logLines = []; drag = null;
   const squares: string[] = [];
   for (let row = 0; row < SIZE; row++) for (let col = 0; col < SIZE; col++) {
@@ -145,7 +174,7 @@ function buildGame() {
   app.innerHTML = `
     <header class="top">
       <div class="who"><span class="dot ${me}"></span><span id="status"></span></div>
-      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="mute" title="Son"></button></div>
+      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="mute" title="${t('sound')}"></button></div>
     </header>
     <div class="timebar"><i id="timebar"></i></div>
     <div class="boardwrap">
@@ -158,8 +187,8 @@ function buildGame() {
     <div class="pips" id="pips">${SUB_COLORS.map((c, t) => `<span style="--c:${c}">${t + 1}</span>`).join('')}</div>
     <div class="slots" id="slots"></div>
     ${rulesLegend('dark')}
-    <p class="hint center">Glissez une pièce (ou cliquez-la, puis sa destination). Cliquez un coup en bas pour le refaire avec les suivants.</p>
-    <div class="row actions"><button id="clear">Annuler le dernier coup</button><button class="primary" id="ok">Valider</button></div>
+    <p class="hint center">${t('hint_game')}</p>
+    <div class="row actions"><button id="clear">${t('undo_last')}</button><button class="primary" id="ok">${t('submit')}</button></div>
     <div class="log" id="log"></div>`;
   boardEl = $('board'); piecesEl = $('pieces'); fxEl = $('fx');
 
@@ -200,14 +229,14 @@ function previewStates(): GameState[] {
 
 /** Message d'état pendant la planification. */
 function planStatus(view: GameState, escape: boolean): string {
-  if (escape) return "Échec ! Parez-le d'abord";
-  if (isInCheck(view.pieces, SIZE, me)) return 'Attention : roi en échec à ce stade';
+  if (escape) return t('status_escape');
+  if (isInCheck(view.pieces, SIZE, me)) return t('status_check_now');
   if (viewAt === SUBS) {
     const out = gameOutcome(view.pieces, SIZE);
-    if (out?.reason === 'checkmate' && out.winner === me) return "Mat prévu (si l'adversaire ne bouge pas)";
+    if (out?.reason === 'checkmate' && out.winner === me) return t('status_mate');
   }
-  if (isInCheck(view.pieces, SIZE, opp(me))) return 'Échec prévu au roi adverse';
-  return `Planifiez vos ${SUBS} coups`;
+  if (isInCheck(view.pieces, SIZE, opp(me))) return t('status_check_opp');
+  return t('status_plan', { n: SUBS });
 }
 
 // --- Pièces (éléments persistants : elles glissent d'une case à l'autre) -----
@@ -246,8 +275,8 @@ function refreshPlanUi() {
   const states = previewStates();
   const view = preview ? states[viewAt]! : state;
 
-  $('status').textContent = over ? (over === 'draw' ? 'Match nul' : over === me ? 'Victoire !' : 'Défaite')
-    : busy ? 'Résolution' : submitted ? 'Plan envoyé… en attente' : planStatus(view, mustEscape(states, viewAt));
+  $('status').textContent = over ? (over === 'draw' ? t('draw') : over === me ? t('win') : t('lose'))
+    : busy ? t('resolving') : submitted ? t('plan_sent') : planStatus(view, mustEscape(states, viewAt));
 
   // Une pièce adverse qui serait mangée si tout se passe bien reste affichée en transparence.
   const alive = new Set(view.pieces.map((q) => q.id));
@@ -273,26 +302,26 @@ function refreshPlanUi() {
   }
 
   // Cartes des coups
-  $('slots').innerHTML = SUB_COLORS.map((color, t) => {
-    const a = plan[t]![0]; const piece = a && planBase.pieces.find((q) => q.id === a.pieceId);
-    const from = a && states[t]!.pieces.find((q) => q.id === a.pieceId)?.pos;
+  $('slots').innerHTML = SUB_COLORS.map((color, i) => {
+    const a = plan[i]![0]; const piece = a && planBase.pieces.find((q) => q.id === a.pieceId);
+    const from = a && states[i]!.pieces.find((q) => q.id === a.pieceId)?.pos;
     const body = a && piece
       ? `<span class="mini ${piece.color[0]}">${pieceSvg(piece.type)}</span>${from
         ? `<span>${sqName(from.file, from.rank)}→${sqName(a.to.file, a.to.rank)}</span>`
-        : '<span class="gone">détruite</span>'}`
-      : '<span class="empty">Aucun coup</span>';
-    return `<button class="slot ${t === activeSub && !busy ? 'active' : ''} ${currentStep === t ? 'now' : ''}" data-t="${t}" style="--c:${color}"><em>${t + 1}</em>${body}</button>`;
+        : `<span class="gone">${t('slot_gone')}</span>`}`
+      : `<span class="empty">${t('slot_empty')}</span>`;
+    return `<button class="slot ${i === activeSub && !busy ? 'active' : ''} ${currentStep === i ? 'now' : ''}" data-t="${i}" style="--c:${color}"><em>${i + 1}</em>${body}</button>`;
   }).join('');
   $('slots').querySelectorAll<HTMLElement>('.slot').forEach((el) => (el.onclick = () => {
     if (!locked()) redoFrom(+el.dataset.t!);
   }));
   $('pips').querySelectorAll('span').forEach((el, i) => el.classList.toggle('on', i === currentStep));
   // Partie finie : les boutons du bas permettent de revoir le résultat ou de quitter, plateau visible.
-  $('clear').textContent = over ? 'Voir le résultat' : 'Annuler le dernier coup';
-  $('ok').textContent = over ? 'Retour au menu' : 'Valider';
+  $('clear').textContent = over ? t('see_result') : t('undo_last');
+  $('ok').textContent = over ? t('to_menu') : t('submit');
   ($('ok') as HTMLButtonElement).disabled = over ? busy : locked();
   ($('clear') as HTMLButtonElement).disabled = over ? busy : locked();
-  $('log').innerHTML = logLines.map((l) => `<div class="${l.cls ?? ''}">${l.text}</div>`).join('');
+  $('log').innerHTML = logHtml();
   $('log').scrollTop = $('log').scrollHeight;
 }
 
@@ -423,7 +452,7 @@ function submit() {
   $('clock').textContent = '';
   if (mode === 'ai') {
     game!.submitPlan(me, plan);
-    game!.submitPlan(opp(me), aiPlan(state, opp(me)));
+    game!.submitPlan(opp(me), aiPlan(state, opp(me), DEFAULT_RULES, Math.random, aiLevel));
     hostResolve();
   } else if (mode === 'host') {
     game!.submitPlan('white', plan);
@@ -449,26 +478,74 @@ function hostResolve() {
 }
 
 // --- Résolution (cinématique) ----------------------------------------------
-function describe(e: GameEvent, before: GameState): { text: string; cls?: string } | null {
-  const nm = (id: string) => { const p = before.pieces.find((q) => q.id === id); return p ? `${NAMES[p.type]} ${p.color === 'white' ? 'blanc' : 'noir'}` : id; };
+/** Figurines (notation algébrique à la Lichess) : le pion n'en a pas. Pleines pour les noirs, creuses pour les blancs. */
+const FIGURINE: Record<Color, Record<PieceType, string>> = {
+  white: { K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '' },
+  black: { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '' },
+};
+const dot = (c: Color) => (c === 'white' ? '○' : '●');
+
+/** Coup en notation algébrique : Cc3, Txd5, exd5, e8=T… (colonne ou rangée d'origine si deux pièces identiques peuvent y aller). */
+function notate(p: PieceState, to: Square, before: GameState, capture: boolean, promo?: PieceType): string {
+  let origin = '';
+  if (p.type === 'P') {
+    if (capture) origin = FILES[p.pos.file]!;
+  } else {
+    const rivals = before.pieces.filter((q) => q.id !== p.id && q.color === p.color && q.type === p.type && geometryReachable(q, to, SIZE, dirOf(p.color)));
+    if (rivals.length) origin = rivals.some((q) => q.pos.file === p.pos.file) ? String(p.pos.rank + 1) : FILES[p.pos.file]!;
+  }
+  const fig = (t: PieceType) => (FIGURINE[p.color][t] ? `<span class="fig">${FIGURINE[p.color][t]}</span>` : '');
+  return `${fig(p.type)}${origin}${capture ? 'x' : ''}${sqName(to.file, to.rank)}${promo ? '=' + fig(promo) : ''}`;
+}
+
+/** Ligne de journal : `n` = numéro du coup, `side` = colonne (blancs / noirs) ; sans `side`, ligne pleine largeur. */
+interface LogLine { text: string; cls?: string; n?: number; side?: Color }
+
+function describe(e: GameEvent, before: GameState, stepEvents: GameEvent[]): LogLine | null {
+  const piece = (id: string) => before.pieces.find((q) => q.id === id);
   const n = (e as { subTurn: number }).subTurn + 1;
   switch (e.kind) {
-    case 'move': return { text: `<b>${n}</b> ${nm(e.pieceId)} ${sqName(e.from.file, e.from.rank)}→${sqName(e.to.file, e.to.rank)}` };
-    case 'cancelled': return { text: `<b>${n}</b> ✗ ${nm(e.pieceId)} → ${sqName(e.to.file, e.to.rank)} : ${REASONS[e.reason]}`, cls: 'cancel' };
-    case 'capture': return { text: `<b>${n}</b> ${nm(e.attackerId)} écrase ${nm(e.victimId)}`, cls: 'cap' };
-    case 'collision': return { text: `<b>${n}</b> Choc en ${sqName(e.at.file, e.at.rank)} : ${e.winnerId ? nm(e.winnerId) + " l'emporte" : 'destruction mutuelle'}`, cls: 'cap' };
-    case 'promotion': return { text: `<b>${n}</b> ${nm(e.pieceId)} promu en ${NAMES[e.to].toLowerCase()}` };
-    case 'check': return { text: `<b>${n}</b> Échec au roi ${e.color === 'white' ? 'blanc' : 'noir'} !`, cls: 'cap' };
-    case 'game-over': return { text: endText(e.winner, e.reason), cls: 'cap' };
-    default: return null;
+    case 'move': {
+      const p = piece(e.pieceId);
+      if (!p) return null;
+      const capture = stepEvents.some((x) => (x.kind === 'capture' && x.attackerId === p.id) || (x.kind === 'collision' && x.winnerId === p.id));
+      const promo = stepEvents.find((x) => x.kind === 'promotion' && x.pieceId === p.id);
+      return { n, side: p.color, text: notate(p, e.to, before, capture, promo?.kind === 'promotion' ? promo.to : undefined), cls: capture ? 'cap' : undefined };
+    }
+    case 'cancelled': {
+      const p = piece(e.pieceId);
+      // Coup impossible : juste le ✗ (la raison n'apparaît qu'au survol).
+      return { n, side: e.owner, text: `<span title="${reasonText(e.reason)}">✗ ${p ? notate(p, e.to, before, false) : sqName(e.to.file, e.to.rank)}</span>`, cls: 'cancel' };
+    }
+    case 'game-over': {
+      const score = e.winner === 'draw' ? '½-½' : e.winner === 'white' ? '1-0' : '0-1';
+      return { text: `${e.reason === 'checkmate' ? '# ' : ''}${endText(e.winner, e.reason)} ${score}`, cls: 'cap' };
+    }
+    default: return null; // capture, promotion, choc, échec : déjà dans la notation du coup ou inutiles ici
   }
 }
 
+/** Journal sur deux colonnes : une ligne par coup, blancs à gauche, noirs à droite. */
+function logHtml(): string {
+  const rows = new Map<number, { white: string[]; black: string[]; full: string[] }>();
+  const tail: string[] = [];
+  const cell = (l: LogLine) => `<div class="${l.cls ?? ''}">${l.text}</div>`;
+  for (const l of logLines) {
+    if (l.n === undefined) { tail.push(`<div class="lfull ${l.cls ?? ''}">${l.text}</div>`); continue; }
+    const row = rows.get(l.n) ?? { white: [], black: [], full: [] };
+    rows.set(l.n, row);
+    (l.side ? row[l.side] : row.full).push(l.side ? cell(l) : `<div class="lfull ${l.cls ?? ''}">${l.text}</div>`);
+  }
+  const body = [...rows.entries()].sort((a, b) => a[0] - b[0])
+    .map(([n, r]) => `<div class="lrow ${n % 2 ? 'odd' : ''}"><b>${n}.</b><div>${r.white.join('')}</div><div>${r.black.join('')}</div></div>${r.full.join('')}`).join('');
+  return `${body}${tail.join('')}`;
+}
+
 function endText(winner: Color | 'draw', reason?: string): string {
-  if (reason === 'stalemate') return 'Pat : match nul.';
-  if (reason === 'insufficient') return 'Il ne reste que les deux rois : match nul.';
-  if (winner === 'draw') return reason === 'checkmate' ? 'Double échec et mat : match nul.' : 'Match nul.';
-  return `Échec et mat : victoire des ${winner === 'white' ? 'blancs' : 'noirs'} !`;
+  if (reason === 'stalemate') return t('end_stalemate');
+  if (reason === 'insufficient') return t('end_insufficient');
+  if (winner === 'draw') return reason === 'checkmate' ? t('end_double') : t('end_draw');
+  return t(winner === 'white' ? 'end_mate_white' : 'end_mate_black');
 }
 
 function playResolution(events: GameEvent[], finalState: GameState) {
@@ -479,10 +556,10 @@ function playResolution(events: GameEvent[], finalState: GameState) {
   let i = 0;
   const next = () => {
     const step = steps[i++];
-    if (!step) { logLines.push({ text: `Fin des ${SUBS} coups : on vérifie mat et pat…` }); refreshPlanUi(); window.setTimeout(finish, 700); return; }
+    if (!step) { window.setTimeout(finish, 700); return; }
     currentStep = step.subTurn;
     const before = state;
-    for (const e of step.events) { const d = describe(e, before); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
+    for (const e of step.events) { const d = describe(e, before, step.events); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
 
     // 1. Coups caducs : la pièce tremble, un nuage de fumée, rien ne bouge.
     for (const e of step.events) if (e.kind === 'cancelled') {
@@ -520,7 +597,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
           if (e.kind === 'collision') { ring(fxEl, c.x, c.y, col); sfx.collision(); } else sfx.capture();
           boardEl.classList.remove('shake'); void boardEl.offsetWidth; boardEl.classList.add('shake');
         }
-        if (e.kind === 'promotion') { const c = pct(e.at); ring(fxEl, c.x, c.y, '#7dffb0'); shout(fxEl, c.x, c.y, NAMES[e.to].toUpperCase() + '!', '#7dffb0'); }
+        if (e.kind === 'promotion') { const c = pct(e.at); ring(fxEl, c.x, c.y, '#7dffb0'); shout(fxEl, c.x, c.y, pieceName(e.to).toUpperCase() + '!', '#7dffb0'); }
       }
       for (const p of dyingList) {
         const el = pieceEls.get(p.id);
@@ -535,7 +612,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     syncPieces(state.pieces); refreshPlanUi();
     if (state.winner) {
       const ban = $('banner'); const won = state.winner === me;
-      ban.innerHTML = `<h2>${state.winner === 'draw' ? 'Match nul' : won ? 'Victoire !' : 'Défaite'}</h2><p>${endText(state.winner, endReason)}</p><button class="primary" id="view">Voir l'échiquier</button><button id="menu">Retour au menu</button>`;
+      ban.innerHTML = `<h2>${state.winner === 'draw' ? t('draw') : won ? t('win') : t('lose')}</h2><p>${endText(state.winner, endReason)}</p><button class="primary" id="view">${t('view_board')}</button><button id="menu">${t('to_menu')}</button>`;
       ban.className = `banner ${state.winner === 'draw' ? '' : won ? 'win' : 'lose'}`; ban.hidden = false;
       $('menu').onclick = () => showMenu();
       $('view').onclick = () => { ban.hidden = true; };

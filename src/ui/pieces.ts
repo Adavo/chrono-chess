@@ -92,7 +92,11 @@ const SPRITES: Record<PieceType, string[]> = {
   ],
 };
 
-function spriteSvg(rows: string[]): string {
+function spriteSvg(source: string[]): string {
+  // Alignement sur le bas : on retire les lignes vides finales et on les remet en haut.
+  const rows = source.slice();
+  while (rows.length && /^\.*$/.test(rows[rows.length - 1]!)) rows.pop();
+  while (rows.length < source.length) rows.unshift('.'.repeat(source[0]!.length));
   const w = rows[0]!.length + 2;
   const h = rows.length + 2;
   const at = (x: number, y: number) => rows[y - 1]?.[x - 1] ?? '.';

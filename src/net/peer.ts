@@ -30,7 +30,7 @@ function wrap(c: any): Conn {
 
 /** Crée une partie : renvoie le code via onCode, puis la connexion de l'invité via onConn. */
 export function host(onCode: (code: string) => void, onConn: (c: Conn) => void, onErr: (m: string) => void): void {
-  if (typeof Peer === 'undefined') return onErr('PeerJS indisponible (connexion internet requise)');
+  if (typeof Peer === 'undefined') return onErr('no-peerjs');
   let taken = false;
   const tryId = () => {
     const code = randCode();
@@ -50,14 +50,14 @@ export function host(onCode: (code: string) => void, onConn: (c: Conn) => void, 
 
 /** Rejoint la partie d'un code donné. */
 export function join(code: string, onOpen: (c: Conn) => void, onErr: (m: string) => void): void {
-  if (typeof Peer === 'undefined') return onErr('PeerJS indisponible (connexion internet requise)');
+  if (typeof Peer === 'undefined') return onErr('no-peerjs');
   peer = new Peer({ debug: 0 });
   let done = false;
   const fail = (m: string) => { if (!done) { done = true; onErr(m); } };
-  peer.on('error', (e: any) => fail(e.type === 'peer-unavailable' ? 'code introuvable' : e.type || String(e)));
+  peer.on('error', (e: any) => fail(e.type === 'peer-unavailable' ? 'code-not-found' : e.type || String(e)));
   peer.on('open', () => {
     const c = peer.connect(PREFIX + code.toUpperCase(), { reliable: true, serialization: 'json' });
     c.on('open', () => { if (!done) { done = true; onOpen(wrap(c)); } });
-    setTimeout(() => fail('délai dépassé'), 12000);
+    setTimeout(() => fail('timeout'), 12000);
   });
 }
