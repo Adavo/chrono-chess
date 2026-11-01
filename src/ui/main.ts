@@ -82,10 +82,18 @@ const foot = document.createElement('footer');
 foot.id = 'foot';
 document.body.appendChild(foot);
 
+/** Bouton de son des menus (en haut à droite). */
+const topSound = document.createElement('button');
+topSound.id = 'top-sound';
+topSound.className = 'icon';
+document.body.appendChild(topSound);
+topSound.onclick = () => { setMuted(!isMuted()); soundIcon(topSound); };
+
 /** Affiche le pied de page ; `redraw` redessine l'écran courant quand on change de langue. `null` = masqué. */
 function showFoot(redraw: (() => void) | null) {
-  foot.hidden = !redraw;
+  foot.hidden = topSound.hidden = !redraw;
   if (!redraw) return;
+  soundIcon(topSound);
   foot.innerHTML = `<span class="version">${VERSION_SHORT}</span><button class="flag" id="lang" title="Language">${flagSvg(getLang())}</button>`;
   $('lang').onclick = () => { setLang(nextLang()); redraw(); };
 }
@@ -190,12 +198,11 @@ function buildGame() {
   app.innerHTML = `
     <header class="top">
       <div class="who"><span class="dot ${me}"></span><span id="status"></span></div>
-      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="menu-btn" title="${t('menu')}" aria-label="${t('menu')}">${MENU_ICON}</button></div>
+      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="gm-sound"></button><button class="icon" id="menu-btn" title="${t('menu')}" aria-label="${t('menu')}">${MENU_ICON}</button></div>
       <div class="gamemenu" id="gmenu" hidden>
         <div class="gm-title">${t('history')}</div>
         <div class="log" id="log"></div>
         ${mode === 'ai' ? `<button id="gm-new">${t('menu_new')}</button>` : ''}
-        <button id="gm-sound"></button>
         <button id="gm-quit">${t('menu_quit')}</button>
       </div>
     </header>
@@ -218,7 +225,7 @@ function buildGame() {
   // Partie terminée, le bouton rouvre la bannière de résultat ; sinon il envoie le plan sans attendre la fin du chrono.
   $('ok').onclick = () => { if (state.winner) $('banner').hidden = false; else submit(); };
   const soundBtn = $('gm-sound');
-  const paintSound = () => (soundBtn.textContent = t(isMuted() ? 'sound_on' : 'sound_off'));
+  const paintSound = () => soundIcon(soundBtn);
   paintSound();
   $('menu-btn').onclick = () => { paintSound(); $('gmenu').hidden = !$('gmenu').hidden; $('log').scrollTop = $('log').scrollHeight; };
   soundBtn.onclick = () => { setMuted(!isMuted()); paintSound(); closeGameMenu(); };
@@ -232,6 +239,16 @@ window.addEventListener('pointerdown', (e) => {
   if (!(e.target as HTMLElement).closest('#gmenu, #menu-btn')) closeGameMenu();
 });
 
+/** Haut-parleur pixel art : ondes = son activé, croix = son coupé. */
+const SPEAKER = '<rect y="3" width="3" height="4"/><polygon points="3,3 6,0 6,10 3,7"/>';
+const SOUND_ON = `<svg viewBox="0 0 12 10" shape-rendering="crispEdges" aria-hidden="true">${SPEAKER}<rect x="8" y="3" width="1" height="4"/><rect x="10" y="1" width="1" height="8"/></svg>`;
+const SOUND_OFF = `<svg viewBox="0 0 12 10" shape-rendering="crispEdges" aria-hidden="true">${SPEAKER}<path d="M8 3L12 7M12 3L8 7" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>`;
+/** Icône et infobulle d'un bouton de son, selon l'état (coupé ou non). */
+function soundIcon(btn: HTMLElement) {
+  btn.innerHTML = isMuted() ? SOUND_OFF : SOUND_ON;
+  btn.title = t(isMuted() ? 'sound_on' : 'sound_off');
+  btn.setAttribute('aria-label', btn.title);
+}
 const MENU_ICON = `<svg viewBox="0 0 12 10" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="2"/><rect y="4" width="12" height="2"/><rect y="8" width="12" height="2"/></svg>`;
 
 const locked = () => busy || submitted || finishing || !!state.winner;
