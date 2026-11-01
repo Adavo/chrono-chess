@@ -9,14 +9,14 @@ export const LEVELS: Level[] = ['easy', 'medium', 'hard', 'master'];
 const VALUE = { P: 1, B: 2, N: 3, R: 5, Q: 9, K: 0 } as const;
 
 /** Réglages de l'IA « gloutonne » : poids des critères et part de hasard. */
-interface Style { noise: number; capture: number; danger: number; check: number; selfCheck: number }
+interface Style { noise: number; capture: number; danger: number; check: number; selfCheck: number; skip: number }
 const STYLES = {
-  // Joue presque au hasard, ne voit ni les menaces ni les échecs.
-  easy: { noise: 7, capture: 0.4, danger: 0, check: 0, selfCheck: 0 },
+  // Joue au hasard (et laisse parfois passer un coup), ne voit ni les menaces ni les échecs.
+  easy: { noise: 30, capture: 0.1, danger: 0, check: 0, selfCheck: 0, skip: 0.3 },
   // Capture, protège ses pièces, cherche l'échec.
-  medium: { noise: 1.5, capture: 1, danger: 1, check: 1, selfCheck: 1 },
+  medium: { noise: 1.5, capture: 1, danger: 1, check: 1, selfCheck: 1, skip: 0 },
   // Base des plans candidats de la recherche (niveaux difficile et Grand Maître).
-  hard: { noise: 0.5, capture: 1, danger: 1.3, check: 1.3, selfCheck: 1.5 },
+  hard: { noise: 0.5, capture: 1, danger: 1.3, check: 1.3, selfCheck: 1.5, skip: 0 },
 } satisfies Record<'easy' | 'medium' | 'hard', Style>;
 
 /**
@@ -33,6 +33,7 @@ function greedyPlan(state: GameState, color: Color, rules: RulesConfig, rnd: () 
 
   for (let t = 0; t < rules.subTurns; t++) {
     obliged = obliged && isInCheck(working.pieces, working.size, color);
+    if (style.skip > 0 && rnd() < style.skip) { plan.push([]); continue; } // coup « gâché »
     const escape: ReadonlySet<Color> = new Set(obliged ? [color] : []);
     const snap = snapshotOf(working.pieces, working.size);
     let best: { pieceId: string; to: Square; promo?: PieceType; score: number } | null = null;

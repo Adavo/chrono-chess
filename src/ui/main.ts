@@ -563,7 +563,8 @@ interface LogLine { text: string; cls?: string; n?: number; side?: Color }
 
 function describe(e: GameEvent, before: GameState, stepEvents: GameEvent[]): LogLine | null {
   const piece = (id: string) => before.pieces.find((q) => q.id === id);
-  const n = (e as { subTurn: number }).subTurn + 1;
+  // Numérotation continue sur toute la partie : manche 1 = coups 1 à 5, manche 2 = coups 6 à 10…
+  const n = before.sequence * SUBS + (e as { subTurn: number }).subTurn + 1;
   switch (e.kind) {
     case 'move': {
       const p = piece(e.pieceId);
@@ -611,7 +612,7 @@ function endText(winner: Color | 'draw', reason?: string): string {
 function playResolution(events: GameEvent[], finalState: GameState) {
   const run = ++runId;
   const later = (fn: () => void, ms: number) => window.setTimeout(() => { if (run === runId) fn(); }, ms);
-  busy = true; clearInterval(timer); logLines = []; selected = null; drag = null; endReason = undefined;
+  busy = true; clearInterval(timer); selected = null; drag = null; endReason = undefined;
   $('clock').textContent = ''; ($('timebar') as HTMLElement).style.width = '0%';
   snapPieces(state.pieces); // les pièces quittent la position "prévue" pour la position réelle
   const steps = replaySteps(state, events);

@@ -1,7 +1,7 @@
 /** Internationalisation légère : français et anglais. La langue vient du navigateur, puis du choix mémorisé. */
-export type Lang = 'fr' | 'en';
+export type Lang = 'fr' | 'en' | 'zh';
 /** Langues proposées, dans l'ordre du sélecteur : en ajouter une = un dictionnaire de plus + un drapeau. */
-export const LANGS: Lang[] = ['fr', 'en'];
+export const LANGS: Lang[] = ['fr', 'en', 'zh'];
 
 const FR = {
   level_title: 'Choisissez le niveau',
@@ -153,15 +153,90 @@ const EN: Record<Key, string> = {
   'reason_king-capture': "a king can't be captured: checkmate it",
 };
 
-const DICTS: Record<Lang, Record<Key, string>> = { fr: FR, en: EN };
+const ZH: Record<Key, string> = {
+  level_title: '选择难度',
+  level_easy: '简单', level_medium: '中等', level_hard: '困难', level_master: '特级大师',
+  level_easy_desc: '几乎随机落子',
+  level_medium_desc: '会吃子、保护棋子、寻找将军',
+  level_hard_desc: '行动前模拟多局对弈',
+  level_master_desc: '模拟数百局对弈：极其强大',
+  back: '返回',
+  tagline: '秘密规划 <b>{n} 步</b>。所有棋步将<b>同时执行</b>。',
+  rule: '如果两个棋子同时落在同一格，较强的留下。',
+  play_ai: '对战电脑',
+  host_btn: '创建在线对局',
+  join_btn: '加入',
+  code_ph: '代码',
+  online_title: '在线对局',
+  give_code: '请把这个代码告诉你的对手',
+  click_copy: '（点击复制）',
+  creating: '创建中…',
+  waiting_opp: '等待对手…',
+  copied: '代码已复制！',
+  cancel: '取消',
+  connecting: '连接中…',
+  enter_code: '请输入5位代码。',
+  lost_opp: '与对手的连接已断开。',
+  lost_host: '与主机的连接已断开。',
+  err_nopeer: 'PeerJS 不可用（需要联网）',
+  err_notfound: '找不到代码',
+  err_timeout: '连接超时',
+  history: '历史记录',
+  menu: '菜单',
+  menu_new: '新对局',
+  menu_quit: '退出对局',
+  sound_off: '静音',
+  sound_on: '开启声音',
+  finish: '结束',
+  see_result: '查看结果',
+  to_menu: '返回菜单',
+  view_board: '查看棋盘',
+  status_escape: '被将军！请先解除',
+  status_check_now: '注意：此时你的王处于被将军状态',
+  status_mate: '预计将死（若对手不动）',
+  status_check_opp: '预计将军对方的王',
+  status_plan: '规划你的 {n} 步',
+  draw: '和棋',
+  win: '胜利！',
+  lose: '失败',
+  resolving: '执行中',
+  plan_sent: '计划已发送…等待中',
+  slot_gone: '已被消灭',
+  slot_empty: '无棋步',
+  end_stalemate: '逼和：和棋。',
+  end_insufficient: '只剩两个王：和棋。',
+  end_double: '双方同时被将死：和棋。',
+  end_draw: '和棋。',
+  end_mate_white: '将死：白方获胜！',
+  end_mate_black: '将死：黑方获胜！',
+  piece_K: '王', piece_Q: '后', piece_R: '车', piece_B: '象', piece_N: '马', piece_P: '兵',
+  'reason_piece-not-found': '该棋子已被消灭',
+  'reason_not-owner': '对方的棋子',
+  'reason_already-acted': '已经走过',
+  'reason_no-move': '没有移动',
+  'reason_out-of-bounds': '超出棋盘',
+  'reason_illegal-geometry': '从实际位置无法到达',
+  'reason_path-blocked': '路径被阻挡',
+  'reason_friendly-occupied': '己方棋子在该格',
+  'reason_blocked-forward': '兵被挡住',
+  'reason_no-capture-target': '没有可吃的目标',
+  'reason_target-moved': '目标已离开',
+  'reason_ally-conflict': '队友也想去同一格',
+  'reason_king-in-check': '王必须先解除将军',
+  'reason_king-attacked': '被攻击的格子：王不能前往',
+  'reason_king-capture': '王不能被吃：请将死它',
+};
+
+const DICTS: Record<Lang, Record<Key, string>> = { fr: FR, en: EN, zh: ZH };
 const STORE_KEY = 'chrono-lang';
 
 function detect(): Lang {
   try {
     const saved = localStorage.getItem(STORE_KEY);
-    if (saved === 'fr' || saved === 'en') return saved;
+    if (saved && (LANGS as string[]).includes(saved)) return saved as Lang;
   } catch { /* stockage indisponible */ }
-  return navigator.language?.toLowerCase().startsWith('fr') ? 'fr' : 'en';
+  const nav = navigator.language?.toLowerCase() ?? '';
+  return nav.startsWith('fr') ? 'fr' : nav.startsWith('zh') ? 'zh' : 'en';
 }
 
 let lang: Lang = detect();
@@ -174,6 +249,7 @@ export const nextLang = (): Lang => LANGS[(LANGS.indexOf(lang) + 1) % LANGS.leng
 
 /** Drapeaux dessinés en SVG (les emojis drapeaux ne s'affichent pas sous Windows). */
 const FLAGS: Record<Lang, string> = {
+  zh: '<rect width="30" height="20" fill="#d63a3a"/><polygon points="5.00,2.00 5.71,4.03 7.85,4.07 6.14,5.37 6.76,7.43 5.00,6.20 3.24,7.43 3.86,5.37 2.15,4.07 4.29,4.03" fill="#ffd23a"/><polygon points="10.00,1.00 10.24,1.68 10.95,1.69 10.38,2.12 10.59,2.81 10.00,2.40 9.41,2.81 9.62,2.12 9.05,1.69 9.76,1.68" fill="#ffd23a"/><polygon points="12.00,3.00 12.24,3.68 12.95,3.69 12.38,4.12 12.59,4.81 12.00,4.40 11.41,4.81 11.62,4.12 11.05,3.69 11.76,3.68" fill="#ffd23a"/><polygon points="12.00,6.00 12.24,6.68 12.95,6.69 12.38,7.12 12.59,7.81 12.00,7.40 11.41,7.81 11.62,7.12 11.05,6.69 11.76,6.68" fill="#ffd23a"/><polygon points="10.00,8.00 10.24,8.68 10.95,8.69 10.38,9.12 10.59,9.81 10.00,9.40 9.41,9.81 9.62,9.12 9.05,8.69 9.76,8.68" fill="#ffd23a"/>',
   fr: '<rect width="10" height="20" fill="#2a4aa8"/><rect x="10" width="10" height="20" fill="#f6f6f6"/><rect x="20" width="10" height="20" fill="#d63a3a"/>',
   en: '<rect width="30" height="20" fill="#2a3a8c"/><path d="M0 0L30 20M30 0L0 20" stroke="#f6f6f6" stroke-width="4"/><path d="M0 0L30 20M30 0L0 20" stroke="#d63a3a" stroke-width="1.5"/><path d="M15 0V20M0 10H30" stroke="#f6f6f6" stroke-width="6"/><path d="M15 0V20M0 10H30" stroke="#d63a3a" stroke-width="3.4"/>',
 };
