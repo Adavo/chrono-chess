@@ -1,18 +1,19 @@
 import './style.css';
-import { aiPlan, LEVELS, type Level } from '../ai/ai';
-import { classicAiMove } from '../ai/classicAi';
+import { LEVELS, type Level } from '../ai/ai';
+import { thinkClassic, thinkPlan } from '../ai/think';
 import { cloneState, createInitialState, rebuildGrid, sameSquare } from '../core/board';
-import { gameOutcome, isInCheck, keepsKingSafe } from '../core/check';
-import { ClassicGame, legalMoves, turnOf, type ClassicMove } from '../core/classic';
+import { gameOutcome, isInCheck, keepsKingSafe, snapshotOf } from '../core/check';
+import { ClassicGame, turnOf, type ClassicMove } from '../core/classic';
 import { checkMove, geometryReachable } from '../core/moves';
 import { replaySteps } from '../core/replay';
 import { resolveSubTurn } from '../core/resolution';
 import { Game } from '../core/sequence';
-import { DEFAULT_RULES, PROMOTIONS, type CancelReason, type Color, type GameEvent, type GameState, type PieceState, type PieceType, type PlannedAction, type RulesConfig, type Square } from '../core/types';
+import { DEFAULT_RULES, PROMOTIONS, type CancelReason, type Color, type GameEvent, type GameState, type PieceState, type PieceType, type Plan, type PlannedAction, type RulesConfig, type Square } from '../core/types';
 import { dropPeer, host, join, type Conn } from '../net/peer';
 import type { GuestToHost, HostToGuest, Variant } from '../net/transport';
 import { burst, isMuted, puff, ring, setMuted, sfx, shout, unlockAudio } from './fx';
 import { flagSvg, getLang, nextLang, setLang, t, type Key } from './i18n';
+import { notate, sqName } from './notation';
 import { pieceSvg } from './pieces';
 import { VERSION_SHORT, checkForUpdate } from './version';
 
@@ -28,14 +29,8 @@ let variant: Variant = loadVariant();
  * Un seul coup par manche dans les deux modes (A : coups alternés, B : coups simultanés).
  * Le moteur sait gérer plusieurs coups par manche (`subTurns`) ; l'interface n'en propose plus.
  */
-const ONE_MOVE: RulesConfig = { ...DEFAULT_RULES, subTurns: 1 };
-let rules: RulesConfig = ONE_MOVE;
-let SUBS = ONE_MOVE.subTurns;
-function applyVariant(v: Variant) {
-  variant = v;
-  rules = ONE_MOVE;
-  SUBS = rules.subTurns;
-}
+const rules: RulesConfig = { ...DEFAULT_RULES, subTurns: 1 };
+const SUBS = rules.subTurns;
 const CELL = 100 / SIZE; // largeur d'une case, en % du plateau
 const PLAN_SECONDS = 5; // temps pour jouer son coup (dans les deux modes)
 const LOW_MS = PLAN_SECONDS * 400; // dernière partie du chrono : barre rouge et tic-tac
@@ -59,8 +54,10 @@ let state: GameState = createInitialState();
 let game: Game | null = null; // autoritaire : IA et hôte seulement (modes simultanés)
 let cgame: ClassicGame | null = null; // idem pour le mode classique
 let conn: Conn | null = null;
-const emptyPlan = (): PlannedAction[][] => Array.from({ length: SUBS }, () => []);
-let plan: PlannedAction[][] = emptyPlan();
+const emptyPlan = (): Plan => Array.from({ length: SUBS }, () => []);
+let plan: Plan = emptyPlan();
+/** Plan de l'IA (mode Bluff) : calculé pendant que le joueur réfléchit. */
+let aiThinking: Promise<Plan> | null = null;
 /** Coup en cours de programmation (0..SUBS-1). */
 let activeSub = 0;
 /** Nombre de coups programmés appliqués à l'affichage : le plateau montre la position prévue. */
@@ -82,7 +79,6 @@ let endReason: string | undefined; // raison de fin de partie (mat, pat) pour la
 let drag: { id: string; x: number; y: number; active: boolean; pointerId: number; again: boolean } | null = null;
 
 const opp = (c: Color): Color => (c === 'white' ? 'black' : 'white');
-const sqName = (f: number, r: number) => FILES[f]! + (r + 1);
 const flip = () => me === 'black';
 /** Case logique -> colonne/ligne à l'écran (le joueur noir voit le plateau retourné). */
 const disp = (s: Square) => ({ c: flip() ? SIZE - 1 - s.file : s.file, row: flip() ? s.rank : SIZE - 1 - s.rank });
@@ -147,7 +143,6 @@ function showMenu(msg = '') {
 /** Nouvelle partie contre l'IA, au niveau déjà choisi. */
 function newAiGame() {
   runId++; finishing = false;
-  applyVariant(variant);
   mode = 'ai';
   me = variant === 'classic' && Math.random() < 0.5 ? 'black' : 'white'; // couleur tirée au sort en mode classique
   startLocalGame();
@@ -200,7 +195,7 @@ function showHost() {
       if (shareBtn) shareBtn.onclick = () => void navigator.share({ title: 'Chrono Chess', text: t('share_text'), url: link }).catch(() => { /* annulé */ });
     },
     (c) => {
-      mode = 'host'; conn = c; applyVariant(variant);
+      mode = 'host'; conn = c;
       me = variant === 'classic' && Math.random() < 0.5 ? 'black' : 'white'; // couleur tirée au sort en mode classique
       c.onmsg = (m: GuestToHost) => {
         if (m.t === 'plan' && game && m.seq === game.state.sequence) { // un plan périmé est ignoré
@@ -225,7 +220,7 @@ function showJoin(code: string) {
   join(code, (c) => {
     mode = 'guest'; conn = c;
     c.onmsg = (m: HostToGuest) => {
-      if (m.t === 'start') { applyVariant(m.variant ?? 'classic'); me = m.color; state = m.state; buildGame(); beginTurn(); }
+      if (m.t === 'start') { variant = m.variant ?? 'classic'; me = m.color; state = m.state; buildGame(); beginTurn(); }
       if (m.t === 'resolved') playResolution(m.events, m.state);
     };
     c.onclose = () => showMenu(t('lost_host'));
@@ -276,7 +271,7 @@ function buildGame() {
   const soundBtn = $('gm-sound');
   const paintSound = () => soundIcon(soundBtn);
   paintSound();
-  $('menu-btn').onclick = () => { paintSound(); $('gmenu').hidden = !$('gmenu').hidden; $('log').scrollTop = $('log').scrollHeight; };
+  $('menu-btn').onclick = () => { paintSound(); $('gmenu').hidden = !$('gmenu').hidden; renderLog(); };
   soundBtn.onclick = () => { setMuted(!isMuted()); paintSound(); closeGameMenu(); };
   $('gm-quit').onclick = () => showMenu();
   if (mode === 'ai') $('gm-new').onclick = () => newAiGame();
@@ -409,7 +404,7 @@ function refreshPlanUi() {
   if (p) {
     sqEl(p.pos)?.classList.add('sel');
     pieceEls.get(p.id)?.classList.add('selected');
-    const snap = { size: SIZE, at: (s: Square) => view.pieces.find((q) => sameSquare(q.pos, s)) };
+    const snap = snapshotOf(view.pieces, SIZE);
     for (let f = 0; f < SIZE; f++) for (let r = 0; r < SIZE; r++) {
       const to = { file: f, rank: r };
       if (!isLegalTarget(view, p, to, viewAt === 0, esc)) continue;
@@ -426,7 +421,7 @@ function refreshPlanUi() {
     const from = a && states[i]!.pieces.find((q) => q.id === a.pieceId)?.pos;
     const body = a && piece
       ? `<span class="mini ${piece.color[0]}">${pieceSvg(piece.type)}</span>${from
-        ? `<span>${sqName(from.file, from.rank)}→${sqName(a.to.file, a.to.rank)}</span>`
+        ? `<span>${sqName(from)}→${sqName(a.to)}</span>`
         : `<span class="gone">${t('slot_gone')}</span>`}`
       : `<span class="empty">${t('slot_empty')}</span>`;
     return `<button class="slot ${i === activeSub && !busy ? 'active' : ''} ${currentStep === i ? 'now' : ''}" data-t="${i}" style="--c:${color}"><em>${i + 1}</em>${body}</button>`;
@@ -438,8 +433,13 @@ function refreshPlanUi() {
   $('actions').hidden = variant === 'classic' && !over; // en mode classique, le coup part dès qu'on le joue
   $('ok').textContent = over ? t('see_result') : t('finish');
   ($('ok') as HTMLButtonElement).disabled = over ? busy : locked();
-  $('log').innerHTML = logHtml();
-  $('log').scrollTop = $('log').scrollHeight;
+}
+
+/** Redessine le journal (seulement quand il change, pas à chaque rafraîchissement du plateau). */
+function renderLog() {
+  const log = $('log');
+  log.innerHTML = logHtml();
+  log.scrollTop = log.scrollHeight;
 }
 
 /**
@@ -454,7 +454,7 @@ function isLegalTarget(view: GameState, p: PieceState, to: Square, first: boolea
   if (!geometryReachable(p, to, SIZE, dirOf(me))) return false;
   if (!first) return true;
   if (view.pieces.some((q) => q.color === me && sameSquare(q.pos, to))) return false; // 1er coup : case alliée certaine
-  const snap = { size: SIZE, at: (s: Square) => view.pieces.find((q) => sameSquare(q.pos, s)) };
+  const snap = snapshotOf(view.pieces, SIZE);
   if (!checkMove(snap, p, to, dirOf(me)).ok) return false;
   if (snap.at(to)?.type === 'K') return false; // un roi ne se capture pas
   return !(escape || variant === 'classic' || p.type === 'K') || keepsKingSafe(view.pieces, SIZE, p, to); // le roi évite toujours les cases attaquées
@@ -586,6 +586,7 @@ function startPlanning() {
   submitted = false; busy = false; finishing = false; currentStep = -1;
   planBase = state;
   $('banner').hidden = true;
+  aiThinking = mode === 'ai' ? thinkPlan(state, opp(me), rules, aiLevel) : null;
   startClock(submit);
   snapPieces(state.pieces);
   refreshPlanUi();
@@ -601,19 +602,23 @@ function startClassicTurn() {
   startClock(() => {
     if (!mineToPlay || busy || submitted) return; // le tour adverse est géré par l'IA ou par l'hôte
     if (mode === 'guest') { submitted = true; refreshPlanUi(); return; } // l'hôte jouera un coup au hasard à ma place
-    playMyClassic(randomMove(me));
+    const m = randomMove(me);
+    if (m) playMyClassic(m);
   });
   snapPieces(state.pieces);
   refreshPlanUi();
   if (mineToPlay) return;
-  if (mode === 'ai') defer(() => { const m = classicAiMove(state, opp(me), aiLevel); if (m) applyClassic(opp(me), m); }, 450 + Math.random() * 450);
-  else if (mode === 'host') defer(() => applyClassic(opp(me), randomMove(opp(me))), PLAN_SECONDS * 1000 + 700); // fin du chrono adverse
+  if (mode === 'ai') {
+    // L'IA réfléchit dans un Worker ; on garde un petit délai minimum pour que son coup reste lisible.
+    const run = runId, start = Date.now(), minDelay = 450 + Math.random() * 450;
+    void thinkClassic(state, opp(me), aiLevel).then((m) => {
+      if (run !== runId || !m) return;
+      defer(() => applyClassic(opp(me), m), Math.max(0, minDelay - (Date.now() - start)));
+    });
+  } else if (mode === 'host') defer(() => { const m = randomMove(opp(me)); if (m) applyClassic(opp(me), m); }, PLAN_SECONDS * 1000 + 700); // fin du chrono adverse
 }
 
-function randomMove(color: Color): ClassicMove {
-  const moves = legalMoves(state.pieces, SIZE, color);
-  return moves[Math.floor(Math.random() * moves.length)]!;
-}
+const randomMove = (color: Color): ClassicMove | null => cgame?.randomMove(color) ?? null;
 
 /** Mon coup en mode classique : envoyé à l'hôte (invité) ou appliqué directement (IA, hôte). */
 function playMyClassic(move: ClassicMove) {
@@ -641,8 +646,8 @@ function submit() {
   $('clock').textContent = '';
   if (mode === 'ai') {
     game!.submitPlan(me, plan);
-    game!.submitPlan(opp(me), aiPlan(state, opp(me), rules, Math.random, aiLevel));
-    hostResolve();
+    const run = runId;
+    void aiThinking?.then((p) => { if (run !== runId || !game) return; game.submitPlan(opp(me), p); hostResolve(); });
   } else if (mode === 'host') {
     game!.submitPlan(me, plan);
     if (game!.ready) hostResolve();
@@ -667,26 +672,6 @@ function hostResolve() {
 }
 
 // --- Résolution (cinématique) ----------------------------------------------
-/** Figurines (notation algébrique à la Lichess) : le pion n'en a pas. Pleines pour les noirs, creuses pour les blancs. */
-const FIGURINE: Record<Color, Record<PieceType, string>> = {
-  white: { K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '' },
-  black: { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '' },
-};
-const dot = (c: Color) => (c === 'white' ? '○' : '●');
-
-/** Coup en notation algébrique : Cc3, Txd5, exd5, e8=T… (colonne ou rangée d'origine si deux pièces identiques peuvent y aller). */
-function notate(p: PieceState, to: Square, before: GameState, capture: boolean, promo?: PieceType): string {
-  let origin = '';
-  if (p.type === 'P') {
-    if (capture) origin = FILES[p.pos.file]!;
-  } else {
-    const rivals = before.pieces.filter((q) => q.id !== p.id && q.color === p.color && q.type === p.type && geometryReachable(q, to, SIZE, dirOf(p.color)));
-    if (rivals.length) origin = rivals.some((q) => q.pos.file === p.pos.file) ? String(p.pos.rank + 1) : FILES[p.pos.file]!;
-  }
-  const fig = (t: PieceType) => (FIGURINE[p.color][t] ? `<span class="fig">${FIGURINE[p.color][t]}</span>` : '');
-  return `${fig(p.type)}${origin}${capture ? 'x' : ''}${sqName(to.file, to.rank)}${promo ? '=' + fig(promo) : ''}`;
-}
-
 /** Ligne de journal : `n` = numéro du coup, `side` = colonne (blancs / noirs) ; sans `side`, ligne pleine largeur. */
 interface LogLine { text: string; cls?: string; n?: number; side?: Color }
 
@@ -705,7 +690,7 @@ function describe(e: GameEvent, before: GameState, stepEvents: GameEvent[]): Log
     case 'cancelled': {
       const p = piece(e.pieceId);
       // Coup impossible : juste le ✗ (la raison n'apparaît qu'au survol).
-      return { n, side: e.owner, text: `<span title="${reasonText(e.reason)}">✗ ${p ? notate(p, e.to, before, false) : sqName(e.to.file, e.to.rank)}</span>`, cls: 'cancel' };
+      return { n, side: e.owner, text: `<span title="${reasonText(e.reason)}">✗ ${p ? notate(p, e.to, before, false) : sqName(e.to)}</span>`, cls: 'cancel' };
     }
     case 'game-over': {
       const score = e.winner === 'draw' ? '½-½' : e.winner === 'white' ? '1-0' : '0-1';
@@ -734,6 +719,7 @@ function logHtml(): string {
 function endText(winner: Color | 'draw', reason?: string): string {
   if (reason === 'stalemate') return t('end_stalemate');
   if (reason === 'insufficient') return t('end_insufficient');
+  if (reason === 'repetition') return t('end_repetition');
   if (winner === 'draw') return reason === 'checkmate' ? t('end_double') : t('end_draw');
   return t(winner === 'white' ? 'end_mate_white' : 'end_mate_black');
 }
@@ -755,6 +741,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     currentStep = step.subTurn;
     const before = state;
     for (const e of step.events) { const d = describe(e, before, step.events); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
+    renderLog();
 
     // 1. Coups caducs : la pièce tremble, un nuage de fumée, rien ne bouge.
     for (const e of step.events) if (e.kind === 'cancelled') {

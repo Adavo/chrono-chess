@@ -101,7 +101,7 @@ export type GameEvent =
   | { kind: 'collision'; subTurn: number; at: Square; pieceIds: PieceId[]; winnerId: PieceId | null }
   | { kind: 'promotion'; subTurn: number; pieceId: PieceId; at: Square; to: PieceType }
   | { kind: 'check'; subTurn: number; color: Color } // le roi de `color` est en échec à la fin de ce sous-tour
-  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw'; reason?: 'checkmate' | 'stalemate' | 'king-lost' | 'insufficient' };
+  | { kind: 'game-over'; subTurn: number; winner: Color | 'draw'; reason?: 'checkmate' | 'stalemate' | 'king-lost' | 'insufficient' | 'repetition' };
 
 export interface RulesConfig {
   size: number;

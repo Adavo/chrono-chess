@@ -2,7 +2,7 @@
 
 Mini-échecs **5×5** avec deux modes de jeu, choisis sur l'accueil (contre l'IA comme en ligne) :
 
-- **A · Classique** : échecs standard, **coup par coup**, **5 s par coup** (à la fin du chrono, un coup légal au hasard est joué). Les blancs commencent, la couleur est tirée au sort. Mat, pat et deux rois seuls sont jugés immédiatement.
+- **A · Classique** : échecs standard, **coup par coup**, **5 s par coup** (à la fin du chrono, un coup légal au hasard est joué). Les blancs commencent, la couleur est tirée au sort. Mat, pat, matériel insuffisant et même position trois fois sont jugés immédiatement.
 - **B · Bluff** : chacun programme **un seul coup** en secret (5 s) ; les deux coups se résolvent **en même temps**. Un coup devenu impossible au moment de s'exécuter (pièce détruite, cible partie…) est **annulé** : la pièce ne bouge pas.
 
 ## Jouer
@@ -15,7 +15,7 @@ Mini-échecs **5×5** avec deux modes de jeu, choisis sur l'accueil (contre l'IA
 - Départ : Tour, Fou, Roi, Cavalier, Tour + 5 pions par camp. Le pion avance d'une case et capture en diagonale ; promotion tirée au sort (cavalier, fou ou tour).
 - **A · Classique** : règles d'échecs usuelles — trajectoires bloquées, la pièce qui bouge capture, aucun coup ne laisse son roi en échec.
 - **B · Bluff** : trajectoires bloquées par les pièces immobiles ; deux pièces qui **bougent** en même temps se croisent sans rien se faire. Si deux pièces ennemies **arrivent** sur la même case, la **plus forte reste** — Roi > Tour > Cavalier > Fou > Pion — et deux pièces de même force s'annulent. Le roi ne peut jamais aller sur une case attaquée, et un roi en échec doit d'abord en sortir.
-- Il ne reste que les deux rois : match nul.
+- Match nul : pat, deux rois seuls (ou un seul cavalier / fou en plus : aucun mat possible), et — en mode classique — la même position trois fois.
 
 Détail dans [`src/core/classic.ts`](src/core/classic.ts) (mode A) et le commentaire en tête de [`src/core/resolution.ts`](src/core/resolution.ts) (mode B).
 
@@ -23,13 +23,16 @@ Détail dans [`src/core/classic.ts`](src/core/classic.ts) (mode A) et le comment
 ```bash
 npm install
 npm run dev     # serveur local
-npm test        # moteur de règles
+npm test        # moteur, IA, notation, rejeu réseau
 npm run build   # site statique dans dist/
 ```
 
 Chaque build publie `version.json` ; au chargement la page le compare (sans cache) à son propre build et se recharge une fois si une version plus récente est en ligne. Le numéro de version est affiché sur l'accueil. `public/_headers` demande `no-cache` sur Netlify/Cloudflare (GitHub Pages l'ignore).
 
-Le moteur (`src/core`) est du TypeScript pur, sans DOM ni réseau ; l'hôte d'une partie en ligne (les blancs) est autoritaire.
+Le moteur (`src/core`) est du TypeScript pur, sans DOM ni réseau ; l'hôte d'une partie en ligne est autoritaire.
+L'IA réfléchit dans un Web Worker ([`src/ai/think.ts`](src/ai/think.ts)) : la page reste fluide pendant que le Grand Maître cherche (approfondissement itératif alpha-bêta, ~1,2 s par coup).
+
+Les tests comparent le générateur de coups rapide à une implémentation naïve de référence sur des milliers de positions aléatoires, vérifient les invariants de chaque position de parties complètes, le rejeu des événements côté invité, l'IA (mat en un coup, pièces en prise) et la notation du journal.
 
 ## Hébergement GitHub Pages
 Dans le dépôt GitHub : **Settings → Pages → Source : GitHub Actions**. Chaque push sur `main` lance [`deploy.yml`](.github/workflows/deploy.yml) (tests, build, déploiement).

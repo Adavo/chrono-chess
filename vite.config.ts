@@ -20,6 +20,7 @@ const buildId = `${pkg.version}-${sha}-${Date.now()}`;
 export default defineConfig({
   // base relative : le site marche sous https://<user>.github.io/<repo>/ quel que soit le nom du dépôt.
   base: './',
+  test: { include: ['tests/**/*.test.ts'] },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __APP_SHA__: JSON.stringify(sha),

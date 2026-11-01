@@ -52,5 +52,9 @@ export function createInitialState(): GameState {
   return state;
 }
 
-// L'état est du JSON pur : un aller-retour JSON suffit (et évite une dépendance aux types DOM/Node).
-export const cloneState = (s: GameState): GameState => JSON.parse(JSON.stringify(s)) as GameState;
+/** Copie profonde de l'état (pièces et cases recopiées ; bien plus rapide qu'un aller-retour JSON). */
+export const cloneState = (s: GameState): GameState => ({
+  ...s,
+  pieces: s.pieces.map((p) => ({ ...p, pos: { file: p.pos.file, rank: p.pos.rank } })),
+  grid: s.grid.slice(),
+});

@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Chrono Chess : mini-échecs 5x5, 5 coups programmés en secret et résolus en même temps",
+  "description": "Chrono Chess : mini-échecs 5x5 nerveux, mode classique (5 s par coup) et mode Bluff (coups secrets simultanés)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
