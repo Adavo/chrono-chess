@@ -124,11 +124,10 @@ function showFoot(redraw: (() => void) | null) {
 function showMenu(msg = '') {
   runId++; finishing = false; closeGameMenu();
   clearInterval(timer); dropPeer(); conn = null; game = null; cgame = null; busy = false;
-  const classic = variant === 'classic';
   app.innerHTML = `<section class="menu-card">
     <div class="logo"><span class="piece-logo mini w">${pieceSvg('K')}</span><h1>Chrono Chess</h1></div>
     <div class="modes">${VARIANTS.map((v) => `<button class="mode ${v === variant ? 'on' : ''}" data-variant="${v}" aria-pressed="${v === variant}"><b>${t(`variant_${v}` as Key)}</b><small>${t(`variant_${v}_desc` as Key, { s: PLAN_SECONDS })}</small></button>`).join('')}</div>
-    ${classic ? '' : rulesLegend()}
+    ${rulesLegend()}
     ${msg ? `<p class="error">${msg}</p>` : ''}
     <button class="primary" id="ai">${t('play_ai')}</button>
     <button id="host">${t('host_btn')}</button>
@@ -186,12 +185,19 @@ function showLevels() {
 function showHost() {
   showFoot(null);
   app.innerHTML = `<section class="menu-card"><h1 class="small">${t('online_title')}</h1><p>${t('give_code')} <span class="hint">${t('click_copy')}</span></p>
-    <div class="code" id="c">· · · · ·</div><p id="st" class="hint">${t('creating')}</p><button id="back">${t('cancel')}</button></section>`;
+    <div class="code" id="c">· · · · ·</div><p id="st" class="hint">${t('creating')}</p>
+    <div class="row" id="share" hidden><button id="copylink">${t('share_copy')}</button>${'share' in navigator ? `<button id="share-btn">${t('share')}</button>` : ''}</div>
+    <button id="back">${t('cancel')}</button></section>`;
   $('back').onclick = () => showMenu();
   host(
     (code) => {
-      $('c').textContent = code; $('st').textContent = t('waiting_opp');
+      // Lien de partage : l'invité n'a qu'à l'ouvrir pour rejoindre (pas de code à recopier).
+      const link = `${location.origin}${location.pathname}?join=${code}`;
+      $('c').textContent = code; $('st').textContent = t('waiting_opp'); $('share').hidden = false;
       $('c').onclick = () => navigator.clipboard?.writeText(code).then(() => ($('st').textContent = t('copied')));
+      $('copylink').onclick = () => navigator.clipboard?.writeText(link).then(() => ($('st').textContent = t('link_copied')));
+      const shareBtn = document.getElementById('share-btn');
+      if (shareBtn) shareBtn.onclick = () => void navigator.share({ title: 'Chrono Chess', text: t('share_text'), url: link }).catch(() => { /* annulé */ });
     },
     (c) => {
       mode = 'host'; conn = c; applyVariant(variant);
@@ -814,5 +820,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
 
 function $(id: string): HTMLElement { return document.getElementById(id)!; }
 
-showMenu();
+// Lien d'invitation (?join=CODE) : on rejoint directement la partie, sans passer par l'accueil.
+const inviteCode = new URLSearchParams(location.search).get('join');
+if (inviteCode) { history.replaceState(null, '', location.pathname); showJoin(inviteCode.trim().slice(0, 5)); } else showMenu();
 void checkForUpdate();
