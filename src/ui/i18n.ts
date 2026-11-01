@@ -4,9 +4,9 @@ export type Lang = 'fr' | 'en' | 'zh';
 export const LANGS: Lang[] = ['fr', 'en', 'zh'];
 
 const FR = {
-  variant_sequence: '5 coups', variant_classic: 'A · Classique', variant_single: 'B · 1 coup',
-  variant_sequence_desc: '5 coups secrets simultanés', variant_classic_desc: 'Coup par coup, 10 s par coup', variant_single_desc: 'Un coup secret simultané, 10 s',
-  tagline_classic: 'Échecs classiques, <b>un coup à la fois</b> : <b>10 secondes</b> par coup. Les blancs commencent, la couleur est tirée au sort.',
+  variant_classic: 'A · Classique', variant_single: 'B · Bluff',
+  variant_classic_desc: 'Coup par coup, {s} s par coup', variant_single_desc: 'Un coup secret simultané, {s} s',
+  tagline_classic: 'Échecs classiques, <b>un coup à la fois</b> : <b>{s} secondes</b> par coup. Les blancs commencent, la couleur est tirée au sort.',
   tagline_single: 'Planifiez <b>1 coup</b> en secret. Il se joue <b>en même temps</b> que celui de votre adversaire.',
   your_turn: 'À vous de jouer', opp_turn: "Tour de l'adversaire", status_plan_one: 'Planifiez votre coup',
   level_title: 'Choisissez le niveau',
@@ -16,7 +16,6 @@ const FR = {
   level_hard_desc: 'Simule plusieurs parties avant de jouer',
   level_master_desc: 'Simule des centaines de parties : redoutable',
   back: 'Retour',
-  tagline: 'Programmez <b>{n} coups</b> en secret. Ils se jouent <b>tous en même temps</b>.',
   rule: 'Si deux pièces arrivent sur la même case, la plus forte reste.',
   play_ai: "Jouer contre l'IA",
   host_btn: 'Créer une partie en ligne',
@@ -50,7 +49,6 @@ const FR = {
   status_check_now: 'Attention : roi en échec à ce stade',
   status_mate: "Mat prévu (si l'adversaire ne bouge pas)",
   status_check_opp: 'Échec prévu au roi adverse',
-  status_plan: 'Planifiez vos {n} coups',
   draw: 'Match nul',
   win: 'Victoire !',
   lose: 'Défaite',
@@ -85,9 +83,9 @@ const FR = {
 export type Key = keyof typeof FR;
 
 const EN: Record<Key, string> = {
-  variant_sequence: '5 moves', variant_classic: 'A · Classic', variant_single: 'B · 1 move',
-  variant_sequence_desc: '5 secret simultaneous moves', variant_classic_desc: 'Turn by turn, 10 s per move', variant_single_desc: 'One secret simultaneous move, 10 s',
-  tagline_classic: 'Classic chess, <b>one move at a time</b>: <b>10 seconds</b> per move. White starts and your color is drawn at random.',
+  variant_classic: 'A · Classic', variant_single: 'B · Bluff',
+  variant_classic_desc: 'Turn by turn, {s} s per move', variant_single_desc: 'One secret simultaneous move, {s} s',
+  tagline_classic: 'Classic chess, <b>one move at a time</b>: <b>{s} seconds</b> per move. White starts and your color is drawn at random.',
   tagline_single: 'Plan <b>1 move</b> in secret. It plays out <b>at the same time</b> as your opponent\'s.',
   your_turn: 'Your move', opp_turn: "Opponent's turn", status_plan_one: 'Plan your move',
   level_title: 'Choose the difficulty',
@@ -97,7 +95,6 @@ const EN: Record<Key, string> = {
   level_hard_desc: 'Simulates several games before moving',
   level_master_desc: 'Simulates hundreds of games: formidable',
   back: 'Back',
-  tagline: 'Plan <b>{n} moves</b> in secret. They all play out <b>at the same time</b>.',
   rule: 'If two pieces land on the same square, the stronger one stays.',
   play_ai: 'Play vs the AI',
   host_btn: 'Create an online game',
@@ -131,7 +128,6 @@ const EN: Record<Key, string> = {
   status_check_now: 'Careful: your king is in check at this point',
   status_mate: "Mate planned (if your opponent doesn't move)",
   status_check_opp: 'Check planned on the enemy king',
-  status_plan: 'Plan your {n} moves',
   draw: 'Draw',
   win: 'Victory!',
   lose: 'Defeat',
@@ -164,9 +160,9 @@ const EN: Record<Key, string> = {
 };
 
 const ZH: Record<Key, string> = {
-  variant_sequence: '5步', variant_classic: 'A · 经典', variant_single: 'B · 1步',
-  variant_sequence_desc: '同时执行5步秘密棋步', variant_classic_desc: '轮流走棋，每步10秒', variant_single_desc: '同时执行1步秘密棋步，10秒',
-  tagline_classic: '经典国际象棋，<b>一次一步</b>：每步 <b>10 秒</b>。白方先走，颜色随机分配。',
+  variant_classic: 'A · 经典', variant_single: 'B · 诈唬',
+  variant_classic_desc: '轮流走棋，每步{s}秒', variant_single_desc: '同时执行1步秘密棋步，{s}秒',
+  tagline_classic: '经典国际象棋，<b>一次一步</b>：每步 <b>{s} 秒</b>。白方先走，颜色随机分配。',
   tagline_single: '秘密规划 <b>1 步</b>。它将与对手的棋步<b>同时执行</b>。',
   your_turn: '轮到你了', opp_turn: '对手的回合', status_plan_one: '规划你的棋步',
   level_title: '选择难度',
@@ -176,7 +172,6 @@ const ZH: Record<Key, string> = {
   level_hard_desc: '行动前模拟多局对弈',
   level_master_desc: '模拟数百局对弈：极其强大',
   back: '返回',
-  tagline: '秘密规划 <b>{n} 步</b>。所有棋步将<b>同时执行</b>。',
   rule: '如果两个棋子同时落在同一格，较强的留下。',
   play_ai: '对战电脑',
   host_btn: '创建在线对局',
@@ -210,7 +205,6 @@ const ZH: Record<Key, string> = {
   status_check_now: '注意：此时你的王处于被将军状态',
   status_mate: '预计将死（若对手不动）',
   status_check_opp: '预计将军对方的王',
-  status_plan: '规划你的 {n} 步',
   draw: '和棋',
   win: '胜利！',
   lose: '失败',

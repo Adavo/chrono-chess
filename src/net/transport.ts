@@ -1,8 +1,8 @@
 import type { ClassicMove } from '../core/classic';
 import type { Color, GameEvent, GameState } from '../core/types';
 
-/** Mode de jeu : 5 coups simultanés, classique (coup par coup) ou un seul coup simultané. */
-export type Variant = 'sequence' | 'classic' | 'single';
+/** Mode de jeu : classique (coup par coup) ou un seul coup simultané. */
+export type Variant = 'classic' | 'single';
 
 /**
  * Protocole (JSON, champ `t` comme dans Nidus Breach). L'hôte (blancs) est autoritaire :

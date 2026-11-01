@@ -17,23 +17,28 @@ import { pieceSvg } from './pieces';
 import { VERSION_SHORT, checkForUpdate } from './version';
 
 const SIZE = DEFAULT_RULES.size;
-const VARIANTS: Variant[] = ['sequence', 'classic', 'single'];
+const VARIANTS: Variant[] = ['classic', 'single'];
 const loadVariant = (): Variant => {
   try { const v = localStorage.getItem('chrono-variant'); if (v && (VARIANTS as string[]).includes(v)) return v as Variant; } catch { /* stockage indisponible */ }
-  return 'sequence';
+  return 'classic';
 };
 /** Mode de jeu en cours (ou choisi sur l'accueil) et règles qui en découlent. */
 let variant: Variant = loadVariant();
-let rules: RulesConfig = DEFAULT_RULES;
-/** Nombre de coups programmés par manche : 5 (mode 5 coups), 1 (mode B) ou 1 (mode classique). */
-let SUBS = DEFAULT_RULES.subTurns;
+/**
+ * Un seul coup par manche dans les deux modes (A : coups alternés, B : coups simultanés).
+ * Le moteur sait gérer plusieurs coups par manche (`subTurns`) ; l'interface n'en propose plus.
+ */
+const ONE_MOVE: RulesConfig = { ...DEFAULT_RULES, subTurns: 1 };
+let rules: RulesConfig = ONE_MOVE;
+let SUBS = ONE_MOVE.subTurns;
 function applyVariant(v: Variant) {
   variant = v;
-  rules = v === 'sequence' ? DEFAULT_RULES : { ...DEFAULT_RULES, subTurns: 1 };
+  rules = ONE_MOVE;
   SUBS = rules.subTurns;
 }
 const CELL = 100 / SIZE; // largeur d'une case, en % du plateau
-const PLAN_SECONDS = 10;
+const PLAN_SECONDS = 5; // temps pour jouer son coup (dans les deux modes)
+const LOW_MS = PLAN_SECONDS * 400; // dernière partie du chrono : barre rouge et tic-tac
 const STEP_MS = 1100; // durée d'un sous-tour à l'écran
 const SUB_COLORS = ['#7ad7ff', '#ffd85e', '#ff8fd0', '#8dff9a', '#ffa05e'];
 const DRAG_THRESHOLD = 6; // px avant qu'un appui devienne un glisser
@@ -122,8 +127,8 @@ function showMenu(msg = '') {
   const classic = variant === 'classic';
   app.innerHTML = `<section class="menu-card">
     <div class="logo"><span class="piece-logo mini w">${pieceSvg('K')}</span><h1>Chrono Chess</h1></div>
-    <div class="modes">${VARIANTS.map((v) => `<button class="mode ${v === variant ? 'on' : ''}" data-variant="${v}"><b>${t(`variant_${v}` as Key)}</b><small>${t(`variant_${v}_desc` as Key)}</small></button>`).join('')}</div>
-    <p class="tagline">${variant === 'sequence' ? t('tagline', { n: DEFAULT_RULES.subTurns }) : t(`tagline_${variant}` as Key)}</p>
+    <div class="modes">${VARIANTS.map((v) => `<button class="mode ${v === variant ? 'on' : ''}" data-variant="${v}"><b>${t(`variant_${v}` as Key)}</b><small>${t(`variant_${v}_desc` as Key, { s: PLAN_SECONDS })}</small></button>`).join('')}</div>
+    <p class="tagline">${t(`tagline_${variant}` as Key, { s: PLAN_SECONDS })}</p>
     ${classic ? '' : `${rulesLegend()}<p class="hint">${t('rule')}</p>`}
     ${msg ? `<p class="error">${msg}</p>` : ''}
     <button class="primary" id="ai">${t('play_ai')}</button>
@@ -215,7 +220,7 @@ function showJoin(code: string) {
   join(code, (c) => {
     mode = 'guest'; conn = c;
     c.onmsg = (m: HostToGuest) => {
-      if (m.t === 'start') { applyVariant(m.variant ?? 'sequence'); me = m.color; state = m.state; buildGame(); beginTurn(); }
+      if (m.t === 'start') { applyVariant(m.variant ?? 'classic'); me = m.color; state = m.state; buildGame(); beginTurn(); }
       if (m.t === 'resolved') playResolution(m.events, m.state);
     };
     c.onclose = () => showMenu(t('lost_host'));
@@ -342,7 +347,7 @@ function planStatus(view: GameState, escape: boolean): string {
     if (out?.reason === 'checkmate' && out.winner === me) return t('status_mate');
   }
   if (isInCheck(view.pieces, SIZE, opp(me))) return t('status_check_opp');
-  return SUBS === 1 ? t('status_plan_one') : t('status_plan', { n: SUBS });
+  return t('status_plan_one');
 }
 
 // --- Pièces (éléments persistants : elles glissent d'une case à l'autre) -----
@@ -548,7 +553,7 @@ function endDrag(drop: boolean, ev: PointerEvent | null) {
 }
 
 // --- Cycle de jeu --------------------------------------------------------------
-/** Chronomètre de 10 s : barre, compte à rebours, tic-tac final ; `onExpire` à l'échéance. */
+/** Chronomètre (PLAN_SECONDS) : barre, compte à rebours, tic-tac final ; `onExpire` à l'échéance. */
 function startClock(onExpire: () => void) {
   deadline = Date.now() + PLAN_SECONDS * 1000;
   clearInterval(timer);
@@ -558,9 +563,9 @@ function startClock(onExpire: () => void) {
     $('clock').textContent = (left / 1000).toFixed(1);
     const bar = $('timebar') as HTMLElement;
     bar.style.width = (left / (PLAN_SECONDS * 1000)) * 100 + '%';
-    bar.classList.toggle('low', left < 5000);
+    bar.classList.toggle('low', left < LOW_MS);
     const s = Math.ceil(left / 1000);
-    if (left < 5000 && s !== lastTick && left > 0) { lastTick = s; sfx.tick(); }
+    if (left < LOW_MS && s !== lastTick && left > 0) { lastTick = s; sfx.tick(); }
     if (left <= 0) { clearInterval(timer); onExpire(); }
   }, 100);
 }
@@ -581,7 +586,7 @@ function startPlanning() {
   refreshPlanUi();
 }
 
-// --- Mode classique : un coup à la fois, 10 s par coup ---------------------------------
+// --- Mode classique : un coup à la fois, chrono par coup ---------------------------------
 function startClassicTurn() {
   plan = emptyPlan(); activeSub = 0; viewAt = 0; selected = null; drag = null;
   submitted = false; busy = false; finishing = false; currentStep = -1;
