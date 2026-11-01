@@ -127,9 +127,8 @@ function showMenu(msg = '') {
   const classic = variant === 'classic';
   app.innerHTML = `<section class="menu-card">
     <div class="logo"><span class="piece-logo mini w">${pieceSvg('K')}</span><h1>Chrono Chess</h1></div>
-    <div class="modes">${VARIANTS.map((v) => `<button class="mode ${v === variant ? 'on' : ''}" data-variant="${v}"><b>${t(`variant_${v}` as Key)}</b><small>${t(`variant_${v}_desc` as Key, { s: PLAN_SECONDS })}</small></button>`).join('')}</div>
-    <p class="tagline">${t(`tagline_${variant}` as Key, { s: PLAN_SECONDS })}</p>
-    ${classic ? '' : `${rulesLegend()}<p class="hint">${t('rule')}</p>`}
+    <div class="modes">${VARIANTS.map((v) => `<button class="mode ${v === variant ? 'on' : ''}" data-variant="${v}" aria-pressed="${v === variant}"><b>${t(`variant_${v}` as Key)}</b><small>${t(`variant_${v}_desc` as Key, { s: PLAN_SECONDS })}</small></button>`).join('')}</div>
+    ${classic ? '' : rulesLegend()}
     ${msg ? `<p class="error">${msg}</p>` : ''}
     <button class="primary" id="ai">${t('play_ai')}</button>
     <button id="host">${t('host_btn')}</button>
