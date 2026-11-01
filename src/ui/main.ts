@@ -1,6 +1,6 @@
 import './style.css';
 import { aiPlan, LEVELS, type Level } from '../ai/ai';
-import { createInitialState, sameSquare } from '../core/board';
+import { cloneState, createInitialState, rebuildGrid, sameSquare } from '../core/board';
 import { gameOutcome, isInCheck, keepsKingSafe } from '../core/check';
 import { checkMove, geometryReachable } from '../core/moves';
 import { replaySteps } from '../core/replay';
@@ -238,21 +238,39 @@ const locked = () => busy || submitted || finishing || !!state.winner;
 
 // --- Prévisualisation : le vrai moteur, l'adversaire restant immobile --------
 /**
- * Dois-je d'abord sortir d'échec avant le coup `at` ? Seulement si mon roi l'était au début de la manche
- * et ne l'a pas quitté depuis : ensuite, on bouge librement.
+ * Dois-je d'abord sortir d'échec ? Seul le 1er coup le sait avec certitude (mon roi est en échec au début de la
+ * manche). Ensuite l'adversaire aura bougé : l'interface ne l'impose plus, le moteur annulera au besoin.
  */
 function mustEscape(states: GameState[], at: number): boolean {
-  for (let i = 0; i <= at; i++) if (!isInCheck(states[i]!.pieces, SIZE, me)) return false;
-  return true;
+  return at === 0 && isInCheck(states[0]!.pieces, SIZE, me);
 }
 
-/** states[n] = position après mes n premiers coups (un coup caduc ne change rien). */
+/**
+ * Coup que le moteur annulerait sur la position prévue (adversaire supposé immobile) mais que le joueur espère
+ * possible : on l'applique « si tout se passe bien » pour que l'aperçu et les coups suivants restent cohérents.
+ */
+function optimisticStep(s: GameState, a: PlannedAction): GameState {
+  const next = cloneState(s);
+  const p = next.pieces.find((q) => q.id === a.pieceId);
+  if (!p || next.pieces.some((q) => q.color === p.color && sameSquare(q.pos, a.to))) return s; // case alliée : jamais
+  const target = next.pieces.find((q) => q.color !== p.color && sameSquare(q.pos, a.to));
+  if (target?.type === 'K') return s; // un roi ne se capture pas
+  next.pieces = next.pieces.filter((q) => q !== target);
+  p.pos = { ...a.to };
+  if (p.type === 'P' && p.pos.rank === (p.color === 'white' ? SIZE - 1 : 0)) p.type = a.promo ?? 'N';
+  rebuildGrid(next);
+  return next;
+}
+
+/** states[n] = position après mes n premiers coups, « si tout se passe bien » (un coup caduc n'a plus besoin de l'être). */
 function previewStates(): GameState[] {
   const out: GameState[] = [planBase];
   for (let t = 0; t < SUBS; t++) {
     const a = plan[t]![0];
+    if (!a) { out.push(out[t]!); continue; }
     const escape = new Set<Color>(mustEscape(out, t) ? [me] : []);
-    out.push(a ? resolveSubTurn(out[t]!, t, [{ ...a, subTurn: t, owner: me, order: 0 }], () => 0, escape).state : out[t]!);
+    const res = resolveSubTurn(out[t]!, t, [{ ...a, subTurn: t, owner: me, order: 0 }], () => 0, escape);
+    out.push(res.events.some((e) => e.kind === 'cancelled') ? optimisticStep(out[t]!, a) : res.state);
   }
   return out;
 }
@@ -324,7 +342,7 @@ function refreshPlanUi() {
     const snap = { size: SIZE, at: (s: Square) => view.pieces.find((q) => sameSquare(q.pos, s)) };
     for (let f = 0; f < SIZE; f++) for (let r = 0; r < SIZE; r++) {
       const to = { file: f, rank: r };
-      if (!isLegalTarget(view, p, to, esc)) continue;
+      if (!isLegalTarget(view, p, to, viewAt === 0, esc)) continue;
       const c = checkMove(snap, p, to, dirOf(me));
       const cls = !c.ok ? 'hint-soft' : c.capture ? 'hint-cap' : 'hint';
       sqEl(to)?.classList.add(cls);
@@ -353,13 +371,19 @@ function refreshPlanUi() {
 }
 
 /**
- * Destination autorisée par l'interface : géométrie valide, pas sur une de mes pièces, et sans
- * mettre/laisser mon roi en échec (l'adversaire étant supposé immobile, comme le moteur).
+ * Destination proposée par l'interface.
+ * - 1er coup : la position est connue, on n'accepte que ce que le moteur validerait (trajectoire libre, pion qui capture
+ *   une vraie cible, roi jamais sur une case attaquée, sortie d'échec si le roi l'est au départ).
+ * - À partir du 2e coup : l'adversaire aura bougé, donc tout ce qui est géométriquement possible est proposé
+ *   (sauf une case occupée par l'une de mes pièces) ; si le coup est vraiment illégal, il sera annulé à la résolution.
  */
-function isLegalTarget(view: GameState, p: PieceState, to: Square, escape: boolean): boolean {
+function isLegalTarget(view: GameState, p: PieceState, to: Square, first: boolean, escape: boolean): boolean {
   if (!geometryReachable(p, to, SIZE, dirOf(me))) return false;
   if (view.pieces.some((q) => q.color === me && sameSquare(q.pos, to))) return false;
-  if (view.pieces.some((q) => q.type === 'K' && q.color !== me && sameSquare(q.pos, to))) return false; // un roi ne se capture pas
+  if (!first) return true;
+  const snap = { size: SIZE, at: (s: Square) => view.pieces.find((q) => sameSquare(q.pos, s)) };
+  if (!checkMove(snap, p, to, dirOf(me)).ok) return false;
+  if (snap.at(to)?.type === 'K') return false; // un roi ne se capture pas
   return !(escape || p.type === 'K') || keepsKingSafe(view.pieces, SIZE, p, to); // le roi évite toujours les cases attaquées
 }
 
@@ -421,7 +445,7 @@ function onPointerDown(ev: PointerEvent) {
   }
   // clic-clic : destination d'une pièce déjà sélectionnée
   const p = selected ? view.pieces.find((q) => q.id === selected) : undefined;
-  if (p && isLegalTarget(view, p, sq, esc)) place(p.id, sq);
+  if (p && isLegalTarget(view, p, sq, viewAt === 0, esc)) place(p.id, sq);
 }
 
 function onPointerMove(ev: PointerEvent) {
@@ -451,7 +475,7 @@ function endDrag(drop: boolean, ev: PointerEvent | null) {
   const states = previewStates();
   const view = states[viewAt]!;
   const p = view.pieces.find((q) => q.id === d.id)!;
-  if (sq && isLegalTarget(view, p, sq, mustEscape(states, viewAt))) {
+  if (sq && isLegalTarget(view, p, sq, viewAt === 0, mustEscape(states, viewAt))) {
     place(d.id, sq);
   } else {
     refreshPlanUi(); // retour à la case d'origine
