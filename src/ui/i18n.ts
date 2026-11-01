@@ -4,6 +4,11 @@ export type Lang = 'fr' | 'en' | 'zh';
 export const LANGS: Lang[] = ['fr', 'en', 'zh'];
 
 const FR = {
+  variant_sequence: '5 coups', variant_classic: 'A · Classique', variant_single: 'B · 1 coup',
+  variant_sequence_desc: '5 coups secrets simultanés', variant_classic_desc: 'Coup par coup, 10 s par coup', variant_single_desc: 'Un coup secret simultané, 10 s',
+  tagline_classic: 'Échecs classiques, <b>un coup à la fois</b> : <b>10 secondes</b> par coup. Les blancs commencent, la couleur est tirée au sort.',
+  tagline_single: 'Planifiez <b>1 coup</b> en secret. Il se joue <b>en même temps</b> que celui de votre adversaire.',
+  your_turn: 'À vous de jouer', opp_turn: "Tour de l'adversaire", status_plan_one: 'Planifiez votre coup',
   level_title: 'Choisissez le niveau',
   level_easy: 'Facile', level_medium: 'Moyen', level_hard: 'Difficile', level_master: 'Grand Maître',
   level_easy_desc: 'Joue presque au hasard',
@@ -80,6 +85,11 @@ const FR = {
 export type Key = keyof typeof FR;
 
 const EN: Record<Key, string> = {
+  variant_sequence: '5 moves', variant_classic: 'A · Classic', variant_single: 'B · 1 move',
+  variant_sequence_desc: '5 secret simultaneous moves', variant_classic_desc: 'Turn by turn, 10 s per move', variant_single_desc: 'One secret simultaneous move, 10 s',
+  tagline_classic: 'Classic chess, <b>one move at a time</b>: <b>10 seconds</b> per move. White starts and your color is drawn at random.',
+  tagline_single: 'Plan <b>1 move</b> in secret. It plays out <b>at the same time</b> as your opponent\'s.',
+  your_turn: 'Your move', opp_turn: "Opponent's turn", status_plan_one: 'Plan your move',
   level_title: 'Choose the difficulty',
   level_easy: 'Easy', level_medium: 'Medium', level_hard: 'Hard', level_master: 'Grandmaster',
   level_easy_desc: 'Plays almost at random',
@@ -154,6 +164,11 @@ const EN: Record<Key, string> = {
 };
 
 const ZH: Record<Key, string> = {
+  variant_sequence: '5步', variant_classic: 'A · 经典', variant_single: 'B · 1步',
+  variant_sequence_desc: '同时执行5步秘密棋步', variant_classic_desc: '轮流走棋，每步10秒', variant_single_desc: '同时执行1步秘密棋步，10秒',
+  tagline_classic: '经典国际象棋，<b>一次一步</b>：每步 <b>10 秒</b>。白方先走，颜色随机分配。',
+  tagline_single: '秘密规划 <b>1 步</b>。它将与对手的棋步<b>同时执行</b>。',
+  your_turn: '轮到你了', opp_turn: '对手的回合', status_plan_one: '规划你的棋步',
   level_title: '选择难度',
   level_easy: '简单', level_medium: '中等', level_hard: '困难', level_master: '特级大师',
   level_easy_desc: '几乎随机落子',

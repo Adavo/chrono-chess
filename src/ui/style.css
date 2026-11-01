@@ -151,7 +151,7 @@ svg.crown { width: 24px; height: 16px; margin-right: 8px; fill: #ffd85e; vertica
 @keyframes fade { from { opacity: 0; } }
 
 /* --- Programmation : les 5 coups --- */
-.slots { margin-top: 28px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; padding: 10px; background: var(--rose); border: 4px solid var(--ink); border-radius: 12px; box-shadow: inset 0 0 0 3px var(--cream), 0 6px 0 var(--ink); }
+.slots { margin-top: 28px; display: grid; grid-template-columns: repeat(var(--n, 5), 1fr); gap: 7px; padding: 10px; background: var(--rose); border: 4px solid var(--ink); border-radius: 12px; box-shadow: inset 0 0 0 3px var(--cream), 0 6px 0 var(--ink); }
 .slots button.slot { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 2px 6px; margin: 0; min-height: 88px; font-size: 1rem; background: var(--rose-d); border-width: 3px; border-color: var(--cream-d); box-shadow: 0 0 0 3px var(--ink); text-shadow: none; color: var(--cream); }
 .slot em { position: absolute; top: 2px; left: 5px; font-style: normal; font-weight: 700; color: var(--c); text-shadow: 1px 1px 0 var(--ink); }
 .slot.active { border-color: var(--c); background: var(--plum); transform: translateY(-3px); }
@@ -177,3 +177,13 @@ svg.crown { width: 24px; height: 16px; margin-right: 8px; fill: #ffd85e; vertica
   .slots button.slot { font-size: .85rem; min-height: 80px; }
   .slot .mini { width: 26px; }
 }
+
+/* --- Choix du mode de jeu --- */
+[hidden] { display: none !important; }
+.slots.one { max-width: 200px; margin-left: auto; margin-right: auto; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+button.mode { display: flex; flex-direction: column; gap: 2px; align-items: center; padding: 8px 4px; margin: 0; }
+button.mode b { font-size: 1.15rem; font-weight: 400; }
+button.mode small { font-size: .85rem; opacity: .85; line-height: 1.05; }
+button.mode.on { background: var(--cream); color: var(--ink); text-shadow: none; border-color: var(--rose-d); }
+

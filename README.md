@@ -4,6 +4,12 @@ Mini-échecs **5×5** à programmation simultanée. Chaque **manche** : 10 s pou
 
 Un coup devenu impossible au moment de s'exécuter (pièce détruite, cible partie, roi en échec…) est **annulé** : la pièce ne bouge pas, rien n'est corrigé.
 
+## Modes de jeu
+Choisis sur l'accueil (contre l'IA comme en ligne) :
+- **5 coups** : chacun programme en secret 5 coups (10 s), résolus en même temps.
+- **A · Classique** : échecs standard 5×5, **coup par coup**, **10 s par coup** (à la fin du chrono, un coup au hasard est joué). Les blancs commencent, la couleur est tirée au sort. Mat, pat et deux rois seuls sont jugés immédiatement.
+- **B · 1 coup** : chacun programme **un seul coup** en secret (10 s) ; il est résolu en même temps que celui de l'adversaire, avec les mêmes règles que le mode 5 coups.
+
 ## Jouer
 - Son entièrement synthétisé (aucun fichier audio) : bruits de pièces en bois et musique d'ambiance générative, coupés d'un appui sur l'icône de son.
 - Interface en **français, anglais et chinois (simplifié)** (langue du navigateur par défaut, sélecteur FR / EN sur l'accueil ; textes dans [`src/ui/i18n.ts`](src/ui/i18n.ts)).
