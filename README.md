@@ -5,6 +5,7 @@ Mini-échecs **5×5** à programmation simultanée. Chaque **manche** : 10 s pou
 Un coup devenu impossible au moment de s'exécuter (pièce détruite, cible partie, roi en échec…) est **annulé** : la pièce ne bouge pas, rien n'est corrigé.
 
 ## Jouer
+- Son entièrement synthétisé (aucun fichier audio) : bruits de pièces en bois et musique d'ambiance générative, coupés d'un appui sur l'icône de son.
 - Interface en **français, anglais et chinois (simplifié)** (langue du navigateur par défaut, sélecteur FR / EN sur l'accueil ; textes dans [`src/ui/i18n.ts`](src/ui/i18n.ts)).
 - **Contre l'IA** (4 niveaux : facile, moyen, difficile, Grand Maître — les deux derniers simulent des parties avec le vrai moteur avant de jouer) ou **en ligne** à deux (code de 5 caractères, WebRTC via [PeerJS](https://peerjs.com/)). Internet requis pour le multi, page servie en HTTPS.
 - Glisser-déposer une pièce (ou clic sur la pièce puis sur sa destination) : le plateau montre la position prévue et des flèches numérotées. Le plan part tout seul dès que les 5 coups sont placés.

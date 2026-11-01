@@ -1,4 +1,4 @@
-/** Effets visuels (DOM + CSS) et sons synthétisés (WebAudio, aucun fichier audio). */
+/** Effets visuels (DOM + CSS), bruitages et musique d'ambiance synthétisés (WebAudio, aucun fichier audio). */
 
 // --- Visuels : coordonnées en % du plateau (0..100) ------------------------
 function spawn(layer: HTMLElement, cls: string, x: number, y: number, html = '', vars: Record<string, string> = {}, life = 1000) {
@@ -43,23 +43,117 @@ export function puff(layer: HTMLElement, x: number, y: number) {
 }
 
 // --- Sons -----------------------------------------------------------------------
+// Tout est synthétisé (WebAudio) : aucun fichier audio. Les pièces claquent comme sur un échiquier en bois
+// (bruit court filtré + « toc » grave) ; l'ambiance est une boucle générative lente (nappes + notes de cloche).
 let ctx: AudioContext | null = null;
+let sfxBus: GainNode | null = null;
+let musicBus: GainNode | null = null;
+let noise: AudioBuffer | null = null;
 let muted = false;
 try { muted = localStorage.getItem('chrono-muted') === '1'; } catch { /* stockage indisponible */ }
+
+const MUSIC_VOLUME = 0.5;
 
 export const isMuted = () => muted;
 export function setMuted(m: boolean) {
   muted = m;
   try { localStorage.setItem('chrono-muted', m ? '1' : '0'); } catch { /* */ }
+  applyMusic();
 }
 
-/** À appeler dans un geste utilisateur (règle des navigateurs). */
+/** À appeler dans un geste utilisateur (règle des navigateurs) : crée le moteur audio et lance l'ambiance. */
 export function unlockAudio() {
-  try { ctx ??= new AudioContext(); void ctx.resume(); } catch { /* pas d'audio */ }
+  try {
+    if (!ctx) {
+      ctx = new AudioContext();
+      sfxBus = ctx.createGain();
+      sfxBus.connect(ctx.destination);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = 0;
+      musicBus.connect(ctx.destination);
+      noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.3), ctx.sampleRate);
+      const data = noise.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    }
+    void ctx.resume();
+    applyMusic();
+  } catch { /* pas d'audio */ }
 }
 
+// --- Musique d'ambiance : Am - F - C - G, une mesure de 8 s par accord -------------
+const CHORDS = [
+  [110, 220, 261.63, 329.63], // La mineur
+  [87.31, 174.61, 220, 261.63], // Fa
+  [130.81, 261.63, 329.63, 392], // Do
+  [98, 196, 246.94, 293.66], // Sol
+];
+const PENTATONIC = [440, 523.25, 587.33, 659.25, 783.99, 880]; // La mineur pentatonique
+const BAR_SECONDS = 8;
+let musicTimer: number | undefined;
+let nextBarAt = 0;
+let barIndex = 0;
+
+/** Nappe douce : triangle filtré, attaque et relâchement lents. */
+function pad(freq: number, at: number, dur: number, vol: number) {
+  if (!ctx || !musicBus) return;
+  const o = ctx.createOscillator();
+  const lp = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+  o.type = 'triangle';
+  o.frequency.value = freq;
+  o.detune.value = (Math.random() - 0.5) * 10;
+  lp.type = 'lowpass';
+  lp.frequency.value = 900;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.linearRampToValueAtTime(vol, at + 2.2);
+  g.gain.setValueAtTime(vol, at + dur - 2.2);
+  g.gain.linearRampToValueAtTime(0.0001, at + dur);
+  o.connect(lp).connect(g).connect(musicBus);
+  o.start(at);
+  o.stop(at + dur + 0.1);
+}
+
+/** Note de cloche : sinus avec une harmonique, décroissance longue. */
+function bell(freq: number, at: number, vol: number) {
+  if (!ctx || !musicBus) return;
+  for (const [mult, v] of [[1, vol], [2, vol * 0.25]] as const) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq * mult;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(v, at + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 2.6);
+    o.connect(g).connect(musicBus);
+    o.start(at);
+    o.stop(at + 2.7);
+  }
+}
+
+function musicLoop() {
+  if (!ctx || muted) { musicTimer = undefined; return; }
+  nextBarAt = Math.max(nextBarAt, ctx.currentTime + 0.1);
+  const chord = CHORDS[barIndex++ % CHORDS.length]!;
+  chord.forEach((f, i) => pad(f, nextBarAt, BAR_SECONDS + 2.2, i === 0 ? 0.1 : 0.05));
+  for (let n = 3 + Math.floor(Math.random() * 3); n > 0; n--) {
+    bell(PENTATONIC[Math.floor(Math.random() * PENTATONIC.length)]!, nextBarAt + 0.6 + Math.random() * (BAR_SECONDS - 1.8), 0.045);
+  }
+  nextBarAt += BAR_SECONDS;
+  musicTimer = window.setTimeout(musicLoop, Math.max(500, (nextBarAt - ctx.currentTime - 1) * 1000));
+}
+
+/** Coupe ou rétablit l'ambiance (fondu) selon le réglage du son. */
+function applyMusic() {
+  if (!ctx || !musicBus) return;
+  musicBus.gain.cancelScheduledValues(ctx.currentTime);
+  musicBus.gain.setTargetAtTime(muted ? 0 : MUSIC_VOLUME, ctx.currentTime, 0.4);
+  if (muted) { clearTimeout(musicTimer); musicTimer = undefined; }
+  else if (musicTimer === undefined) musicLoop();
+}
+
+// --- Bruitages ------------------------------------------------------------------------
 function tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo?: number, delay = 0) {
-  if (muted || !ctx) return;
+  if (muted || !ctx || !sfxBus) return;
   const t = ctx.currentTime + delay;
   const o = ctx.createOscillator();
   const g = ctx.createGain();
@@ -68,17 +162,42 @@ function tone(freq: number, dur: number, type: OscillatorType, vol: number, slid
   if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(ctx.destination);
+  o.connect(g).connect(sfxBus);
   o.start(t);
   o.stop(t + dur);
 }
 
+/** Claquement sec : bruit court passé dans un filtre passe-bande (le « clac » du bois). */
+function knock(vol: number, freq: number, len: number, delay = 0, q = 1.4) {
+  if (muted || !ctx || !sfxBus || !noise) return;
+  const t = ctx.currentTime + delay;
+  const src = ctx.createBufferSource();
+  const bp = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+  src.buffer = noise;
+  bp.type = 'bandpass';
+  bp.frequency.value = freq;
+  bp.Q.value = q;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  src.connect(bp).connect(g).connect(sfxBus);
+  src.start(t, Math.random() * 0.1);
+  src.stop(t + len + 0.02);
+}
+
+/** Une pièce qu'on pose : claquement + petit corps grave, avec une légère variation de hauteur. */
+function piece(vol = 1, pitch = 1, delay = 0) {
+  const p = pitch * (0.94 + Math.random() * 0.12);
+  knock(0.9 * vol, 1750 * p, 0.06, delay);
+  tone(175 * p, 0.09, 'sine', 0.3 * vol, 95 * p, delay);
+}
+
 export const sfx = {
-  select: () => tone(660, 0.07, 'triangle', 0.08),
-  plan: () => { tone(520, 0.08, 'triangle', 0.1); tone(780, 0.1, 'triangle', 0.08, undefined, 0.06); },
-  move: () => tone(300, 0.18, 'sine', 0.12, 180),
-  capture: () => { tone(160, 0.25, 'sawtooth', 0.14, 60); tone(900, 0.1, 'square', 0.05, 200); },
-  collision: () => { tone(110, 0.4, 'sawtooth', 0.18, 40); tone(60, 0.5, 'square', 0.1, 30); },
+  select: () => knock(0.14, 3200, 0.025, 0, 2),
+  plan: () => piece(0.7),
+  move: () => piece(1),
+  capture: () => { knock(1.1, 1300, 0.1); tone(150, 0.16, 'sine', 0.4, 70); piece(0.9, 1.1, 0.06); },
+  collision: () => { knock(1.2, 900, 0.14); tone(110, 0.4, 'sawtooth', 0.14, 40); tone(60, 0.5, 'square', 0.08, 30); piece(1, 0.8, 0.08); },
   fizzle: () => tone(420, 0.35, 'sawtooth', 0.07, 70),
   tick: () => tone(1000, 0.04, 'square', 0.05),
   win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.12, undefined, i * 0.12)),
