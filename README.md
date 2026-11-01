@@ -1,6 +1,6 @@
 # Chrono Chess
 
-Mini-échecs **5×5** à programmation simultanée. Chaque **manche** : 20 s pour programmer en secret **5 coups** (un par sous-tour), puis les coups se résolvent **en même temps**, sous-tour par sous-tour.
+Mini-échecs **5×5** à programmation simultanée. Chaque **manche** : 10 s pour programmer en secret **5 coups** (un par sous-tour), puis les coups se résolvent **en même temps**, sous-tour par sous-tour.
 
 Un coup devenu impossible au moment de s'exécuter (pièce détruite, cible partie, roi en échec…) est **annulé** : la pièce ne bouge pas, rien n'est corrigé.
 
@@ -13,7 +13,7 @@ Un coup devenu impossible au moment de s'exécuter (pièce détruite, cible part
 - Départ : Tour, Fou, Roi, Cavalier, Tour + 5 pions par camp.
 - Les pièces **se traversent** (aucune trajectoire bloquée). Le pion avance d'une case et capture en diagonale.
 - Deux pièces ennemies sur la même case (arrivée simultanée, ou arrivée sur une pièce immobile) : la **plus forte reste** — Roi > Tour > Cavalier > Fou > Pion. À force égale, le mouvant bat l'immobile ; deux mouvants de même force s'annulent.
-- **Échec** : pendant les 5 coups, on bouge librement (on peut exposer son roi). Si votre roi est en échec **au début de la manche**, vous devez d'abord en sortir : tant qu'il l'est, tout autre coup est annulé. Une fois sorti, vous êtes de nouveau libre.
+- **Échec** : pendant les 5 coups, on bouge librement (on peut exposer son roi avec une autre pièce), mais le **roi ne peut jamais aller sur une case attaquée** (coup rejeté). Si votre roi est en échec **au début de la manche**, vous devez d'abord en sortir : tant qu'il l'est, tout autre coup est annulé. Une fois sorti, vous êtes de nouveau libre.
 - **Échec et mat / pat : jugés seulement après le 5e coup**, sur la position finale. Il ne reste que les deux rois : match nul. Un roi maté au 3e coup joue quand même ses 4e et 5e coups avant le verdict.
 
 Détail dans le commentaire en tête de [`src/core/resolution.ts`](src/core/resolution.ts).

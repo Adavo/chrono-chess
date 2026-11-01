@@ -36,8 +36,9 @@ import {
  *  6. Une case alliée occupée au début du sous-tour bloque, même si l'allié part ; deux alliés
  *     visant la même case : le premier de la file passe, l'autre est caduc.
  *  7. Capture en diagonale d'un pion : annulée si la cible a une action valide (elle part).
- *  8. Échec : pendant les coups d'une manche, on bouge LIBREMENT (on peut exposer son roi, le
- *     mettre en échec ou le laisser en échec). Seule exception : un roi déjà en échec au DÉBUT de la
+ *  8. Échec : pendant les coups d'une manche, on bouge LIBREMENT (on peut exposer son roi en déplaçant
+ *     une autre pièce), sauf que le ROI ne peut jamais aller sur une case attaquée ('king-attacked').
+ *     Autre exception : un roi déjà en échec au DÉBUT de la
  *     manche doit d'abord en sortir — tant qu'il l'est au début d'un sous-tour, tout coup qui ne le
  *     sauve pas est annulé ('king-in-check'). Une fois sorti d'échec, plus d'obligation jusqu'à la
  *     manche suivante. Un roi ne se capture jamais ('king-capture').
@@ -101,7 +102,11 @@ export function resolveSubTurn(
     if (!check.ok) { cancel(a, check.reason); continue; }
     // Un roi ne se capture jamais : on le met échec et mat.
     if (check.capture && snap.at(a.to)?.type === 'K') { cancel(a, 'king-capture'); continue; }
-    if (escape.has(piece.color) && !keepsKingSafe(state.pieces, size, piece, a.to)) { cancel(a, 'king-in-check'); continue; }
+    // Un roi ne va jamais sur une case attaquée (déplacement rejeté) ; les autres pièces sont libres,
+    // sauf si le roi doit d'abord sortir d'échec.
+    if ((escape.has(piece.color) || piece.type === 'K') && !keepsKingSafe(state.pieces, size, piece, a.to)) {
+      cancel(a, piece.type === 'K' && !escape.has(piece.color) ? 'king-attacked' : 'king-in-check'); continue;
+    }
 
     const claim = `${piece.color}:${sqKey(a.to, size)}`;
     if (claimed.has(claim)) { cancel(a, 'ally-conflict'); continue; }
@@ -168,13 +173,16 @@ export function resolveSubTurn(
   // Tous les mouvants glissent jusqu'à leur case (même ceux qui y périssent) avant l'impact.
   for (const m of moves) events.push({ kind: 'move', subTurn, pieceId: m.piece.id, from: m.from, to: m.to });
   next.pieces = next.pieces.filter((p) => !removed.has(p.id));
+  const asked = new Map(moves.map((m) => [m.piece.id, m.action.promo]));
   for (const p of next.pieces) {
     const dest = landing.get(p.id);
     if (!dest) continue;
     p.pos = { ...dest };
     const lastRank = p.color === 'white' ? size - 1 : 0;
     if (p.type === 'P' && p.pos.rank === lastRank) {
-      p.type = PROMOTIONS[Math.floor(rnd() * PROMOTIONS.length)]!;
+      // La pièce a été tirée au sort à la programmation ; sans tirage valide (coup inattendu), on tire ici.
+      const chosen = asked.get(p.id);
+      p.type = chosen && PROMOTIONS.includes(chosen) ? chosen : PROMOTIONS[Math.floor(rnd() * PROMOTIONS.length)]!;
       events.push({ kind: 'promotion', subTurn, pieceId: p.id, at: p.pos, to: p.type });
     }
   }

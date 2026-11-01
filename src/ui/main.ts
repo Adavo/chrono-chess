@@ -6,7 +6,7 @@ import { checkMove, geometryReachable } from '../core/moves';
 import { replaySteps } from '../core/replay';
 import { resolveSubTurn } from '../core/resolution';
 import { Game } from '../core/sequence';
-import { DEFAULT_RULES, type CancelReason, type Color, type GameEvent, type GameState, type PieceState, type PieceType, type PlannedAction, type Square } from '../core/types';
+import { DEFAULT_RULES, PROMOTIONS, type CancelReason, type Color, type GameEvent, type GameState, type PieceState, type PieceType, type PlannedAction, type Square } from '../core/types';
 import { dropPeer, host, join, type Conn } from '../net/peer';
 import type { GuestToHost, HostToGuest } from '../net/transport';
 import { burst, isMuted, puff, ring, setMuted, sfx, shout, unlockAudio } from './fx';
@@ -17,7 +17,7 @@ import { VERSION_SHORT, checkForUpdate } from './version';
 const SIZE = DEFAULT_RULES.size;
 const SUBS = DEFAULT_RULES.subTurns;
 const CELL = 100 / SIZE; // largeur d'une case, en % du plateau
-const PLAN_SECONDS = 20;
+const PLAN_SECONDS = 10;
 const STEP_MS = 1100; // durée d'un sous-tour à l'écran
 const SUB_COLORS = ['#7ad7ff', '#ffd85e', '#ff8fd0', '#8dff9a', '#ffa05e'];
 const DRAG_THRESHOLD = 6; // px avant qu'un appui devienne un glisser
@@ -47,6 +47,11 @@ let selected: string | null = null;
 let deadline = 0;
 let submitted = false;
 let busy = false;
+/** Les 5 coups sont placés : courte pause avant le lancement de la résolution. */
+let finishing = false;
+/** Identifie la résolution en cours : l'incrémenter annule ses animations différées (quitter, nouvelle partie). */
+let runId = 0;
+const FINISH_DELAY_MS = 1000;
 let currentStep = -1; // sous-tour affiché pendant la résolution
 let timer: number | undefined;
 let logLines: LogLine[] = [];
@@ -87,6 +92,7 @@ function showFoot(redraw: (() => void) | null) {
 
 // --- Menus -------------------------------------------------------------------
 function showMenu(msg = '') {
+  runId++; finishing = false; closeGameMenu();
   clearInterval(timer); dropPeer(); conn = null; game = null; busy = false;
   app.innerHTML = `<section class="menu-card">
     <div class="logo"><span class="piece-logo mini w">${pieceSvg('K')}</span><h1>Chrono Chess</h1></div>
@@ -104,18 +110,28 @@ function showMenu(msg = '') {
   $('join').onclick = () => showJoin(($('code') as HTMLInputElement).value.trim());
 }
 
+/** Nouvelle partie contre l'IA, au niveau déjà choisi. */
+function newAiGame() {
+  runId++; finishing = false;
+  mode = 'ai'; me = 'white'; game = new Game(createInitialState()); state = game.state;
+  buildGame(); startPlanning();
+}
+
+/** Petite couronne pixel art (Grand Maître). */
+const CROWN = `<svg class="crown" viewBox="0 0 9 6" shape-rendering="crispEdges" aria-hidden="true">${['#...#...#', '##.###.##', '#########', '#########', '#########']
+  .flatMap((row, y) => [...row].map((c, x) => (c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : ''))).join('')}</svg>`;
+
 /** Second menu : niveau de l'IA. */
 function showLevels() {
   app.innerHTML = `<section class="menu-card">
     <h1 class="small">${t('level_title')}</h1>
-    ${LEVELS.map((l) => `<button class="${l === 'master' ? 'primary' : ''} level" data-level="${l}"><b>${t(`level_${l}` as Key)}</b><small>${t(`level_${l}_desc` as Key)}</small></button>`).join('')}
+    ${LEVELS.map((l) => `<button class="level ${l === 'master' ? 'master' : ''}" data-level="${l}"><b>${l === 'master' ? CROWN : ''}${t(`level_${l}` as Key)}</b><small>${t(`level_${l}_desc` as Key)}</small></button>`).join('')}
     <button id="back">${t('back')}</button>
   </section>`;
   showFoot(showLevels);
   document.querySelectorAll<HTMLElement>('[data-level]').forEach((b) => (b.onclick = () => {
     aiLevel = b.dataset.level as Level;
-    mode = 'ai'; me = 'white'; game = new Game(createInitialState()); state = game.state;
-    buildGame(); startPlanning();
+    newAiGame();
   }));
   $('back').onclick = () => showMenu();
 }
@@ -174,7 +190,14 @@ function buildGame() {
   app.innerHTML = `
     <header class="top">
       <div class="who"><span class="dot ${me}"></span><span id="status"></span></div>
-      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="mute" title="${t('sound')}"></button></div>
+      <div class="right"><span class="clock" id="clock"></span><button class="icon" id="menu-btn" title="${t('menu')}" aria-label="${t('menu')}">${MENU_ICON}</button></div>
+      <div class="gamemenu" id="gmenu" hidden>
+        <div class="gm-title">${t('history')}</div>
+        <div class="log" id="log"></div>
+        ${mode === 'ai' ? `<button id="gm-new">${t('menu_new')}</button>` : ''}
+        <button id="gm-sound"></button>
+        <button id="gm-quit">${t('menu_quit')}</button>
+      </div>
     </header>
     <div class="timebar"><i id="timebar"></i></div>
     <div class="boardwrap">
@@ -184,27 +207,34 @@ function buildGame() {
         <div class="banner" id="banner" hidden></div>
       </div>
     </div>
-    <div class="pips" id="pips">${SUB_COLORS.map((c, t) => `<span style="--c:${c}">${t + 1}</span>`).join('')}</div>
     <div class="slots" id="slots"></div>
-    ${rulesLegend('dark')}
-    <p class="hint center">${t('hint_game')}</p>
-    <div class="row actions"><button id="clear">${t('undo_last')}</button><button class="primary" id="ok">${t('submit')}</button></div>
-    <div class="log" id="log"></div>`;
+    <div class="row actions"><button class="primary" id="ok">${t('finish')}</button></div>`;
   boardEl = $('board'); piecesEl = $('pieces'); fxEl = $('fx');
 
   boardEl.addEventListener('pointerdown', onPointerDown);
   boardEl.addEventListener('pointermove', onPointerMove);
   boardEl.addEventListener('pointerup', onPointerUp);
   boardEl.addEventListener('pointercancel', () => endDrag(false, null));
-  $('clear').onclick = () => { if (state.winner) { $('banner').hidden = false; return; } if (!locked()) { const last = plan.map((a) => a.length > 0).lastIndexOf(true); if (last >= 0) redoFrom(last); } };
-  $('ok').onclick = () => (state.winner ? showMenu() : submit());
-  const mute = $('mute');
-  const paintMute = () => (mute.textContent = isMuted() ? '🔇' : '🔊');
-  mute.onclick = () => { setMuted(!isMuted()); paintMute(); };
-  paintMute();
+  // Partie terminée, le bouton rouvre la bannière de résultat ; sinon il envoie le plan sans attendre la fin du chrono.
+  $('ok').onclick = () => { if (state.winner) $('banner').hidden = false; else submit(); };
+  const soundBtn = $('gm-sound');
+  const paintSound = () => (soundBtn.textContent = t(isMuted() ? 'sound_on' : 'sound_off'));
+  paintSound();
+  $('menu-btn').onclick = () => { paintSound(); $('gmenu').hidden = !$('gmenu').hidden; $('log').scrollTop = $('log').scrollHeight; };
+  soundBtn.onclick = () => { setMuted(!isMuted()); paintSound(); closeGameMenu(); };
+  $('gm-quit').onclick = () => showMenu();
+  if (mode === 'ai') $('gm-new').onclick = () => newAiGame();
 }
 
-const locked = () => busy || submitted || !!state.winner;
+/** Menu de partie : se ferme quand on touche ailleurs. */
+const closeGameMenu = () => { const m = document.getElementById('gmenu'); if (m) m.hidden = true; };
+window.addEventListener('pointerdown', (e) => {
+  if (!(e.target as HTMLElement).closest('#gmenu, #menu-btn')) closeGameMenu();
+});
+
+const MENU_ICON = `<svg viewBox="0 0 12 10" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="2"/><rect y="4" width="12" height="2"/><rect y="8" width="12" height="2"/></svg>`;
+
+const locked = () => busy || submitted || finishing || !!state.winner;
 
 // --- Prévisualisation : le vrai moteur, l'adversaire restant immobile --------
 /**
@@ -315,12 +345,9 @@ function refreshPlanUi() {
   $('slots').querySelectorAll<HTMLElement>('.slot').forEach((el) => (el.onclick = () => {
     if (!locked()) redoFrom(+el.dataset.t!);
   }));
-  $('pips').querySelectorAll('span').forEach((el, i) => el.classList.toggle('on', i === currentStep));
-  // Partie finie : les boutons du bas permettent de revoir le résultat ou de quitter, plateau visible.
-  $('clear').textContent = over ? t('see_result') : t('undo_last');
-  $('ok').textContent = over ? t('to_menu') : t('submit');
+  // Partie finie : le bouton du bas permet de revoir le résultat, plateau visible.
+  $('ok').textContent = over ? t('see_result') : t('finish');
   ($('ok') as HTMLButtonElement).disabled = over ? busy : locked();
-  ($('clear') as HTMLButtonElement).disabled = over ? busy : locked();
   $('log').innerHTML = logHtml();
   $('log').scrollTop = $('log').scrollHeight;
 }
@@ -333,7 +360,7 @@ function isLegalTarget(view: GameState, p: PieceState, to: Square, escape: boole
   if (!geometryReachable(p, to, SIZE, dirOf(me))) return false;
   if (view.pieces.some((q) => q.color === me && sameSquare(q.pos, to))) return false;
   if (view.pieces.some((q) => q.type === 'K' && q.color !== me && sameSquare(q.pos, to))) return false; // un roi ne se capture pas
-  return !escape || keepsKingSafe(view.pieces, SIZE, p, to);
+  return !(escape || p.type === 'K') || keepsKingSafe(view.pieces, SIZE, p, to); // le roi évite toujours les cases attaquées
 }
 
 const sqEl = (s: Square) => document.querySelector<HTMLElement>(`.sq[data-f="${s.file}"][data-r="${s.rank}"]`);
@@ -349,13 +376,22 @@ function redoFrom(t: number) {
 
 /** Enregistre le coup du sous-tour actif : la pièce se déplace à l'écran. */
 function place(id: string, to: Square) {
-  plan[activeSub] = [{ pieceId: id, to }].slice(0, DEFAULT_RULES.maxActionsPerSubTurn);
+  // Promotion : la pièce est tirée au sort maintenant, montrée dans l'aperçu et reprise telle quelle à la résolution.
+  const pawn = previewStates()[viewAt]!.pieces.find((q) => q.id === id);
+  const promo = pawn?.type === 'P' && to.rank === (me === 'white' ? SIZE - 1 : 0) ? PROMOTIONS[Math.floor(Math.random() * PROMOTIONS.length)] : undefined;
+  plan[activeSub] = [{ pieceId: id, to, ...(promo ? { promo } : {}) }].slice(0, DEFAULT_RULES.maxActionsPerSubTurn);
   sfx.plan();
   selected = null;
   viewAt = activeSub + 1;
   activeSub = Math.min(activeSub + 1, SUBS - 1);
-  // Tous les coups sont programmés : validation automatique (inutile d'attendre la fin du chrono).
-  if (plan.every((a) => a.length > 0)) { submit(); return; }
+  // Tous les coups sont programmés : validation automatique après une petite pause (inutile d'attendre la fin du chrono).
+  if (plan.every((a) => a.length > 0)) {
+    finishing = true;
+    refreshPlanUi();
+    const run = runId;
+    window.setTimeout(() => { if (run !== runId) return; finishing = false; submit(); }, FINISH_DELAY_MS);
+    return;
+  }
   refreshPlanUi();
 }
 
@@ -425,7 +461,7 @@ function endDrag(drop: boolean, ev: PointerEvent | null) {
 // --- Cycle de jeu --------------------------------------------------------------
 function startPlanning() {
   plan = emptyPlan(); activeSub = 0; viewAt = 0; selected = null; drag = null;
-  submitted = false; busy = false; currentStep = -1;
+  submitted = false; busy = false; finishing = false; currentStep = -1;
   planBase = state;
   deadline = Date.now() + PLAN_SECONDS * 1000;
   $('banner').hidden = true;
@@ -549,6 +585,8 @@ function endText(winner: Color | 'draw', reason?: string): string {
 }
 
 function playResolution(events: GameEvent[], finalState: GameState) {
+  const run = ++runId;
+  const later = (fn: () => void, ms: number) => window.setTimeout(() => { if (run === runId) fn(); }, ms);
   busy = true; clearInterval(timer); logLines = []; selected = null; drag = null; endReason = undefined;
   $('clock').textContent = ''; ($('timebar') as HTMLElement).style.width = '0%';
   snapPieces(state.pieces); // les pièces quittent la position "prévue" pour la position réelle
@@ -556,7 +594,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
   let i = 0;
   const next = () => {
     const step = steps[i++];
-    if (!step) { window.setTimeout(finish, 700); return; }
+    if (!step) { later(finish, 700); return; }
     currentStep = step.subTurn;
     const before = state;
     for (const e of step.events) { const d = describe(e, before, step.events); if (d) logLines.push(d); if (e.kind === 'game-over') endReason = e.reason; }
@@ -567,14 +605,14 @@ function playResolution(events: GameEvent[], finalState: GameState) {
       if (p) {
         const c = pct(p.pos); puff(fxEl, c.x, c.y); sfx.fizzle();
         const inner = pieceEls.get(p.id)?.querySelector('.inner');
-        inner?.classList.add('wobble'); window.setTimeout(() => inner?.classList.remove('wobble'), 700);
+        inner?.classList.add('wobble'); later(() => inner?.classList.remove('wobble'), 700);
       }
     }
     // 2. Déplacements : les pièces glissent (simultanément).
     state = step.state;
     for (const e of step.events) if (e.kind === 'move') {
       const inner = pieceEls.get(e.pieceId)?.querySelector('.inner');
-      inner?.classList.add('lift'); window.setTimeout(() => inner?.classList.remove('lift'), 600);
+      inner?.classList.add('lift'); later(() => inner?.classList.remove('lift'), 600);
     }
     if (step.events.some((e) => e.kind === 'move')) sfx.move();
     // Les victimes glissent jusqu'à la case du choc (si elles bougeaient) avant de disparaître.
@@ -587,7 +625,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     refreshPlanUi();
 
     // 3. Impacts, un peu après l'arrivée.
-    window.setTimeout(() => {
+    later(() => {
       for (const e of step.events) {
         if (e.kind === 'capture' || e.kind === 'collision') {
           const c = pct(e.at);
@@ -602,10 +640,10 @@ function playResolution(events: GameEvent[], finalState: GameState) {
       for (const p of dyingList) {
         const el = pieceEls.get(p.id);
         el?.querySelector('.inner')?.classList.add('die');
-        window.setTimeout(() => { el?.remove(); pieceEls.delete(p.id); }, 520);
+        later(() => { el?.remove(); pieceEls.delete(p.id); }, 520);
       }
     }, 520);
-    window.setTimeout(next, STEP_MS);
+    later(next, STEP_MS);
   };
   const finish = () => {
     state = finalState; busy = false; currentStep = -1;
@@ -620,7 +658,7 @@ function playResolution(events: GameEvent[], finalState: GameState) {
     } else startPlanning();
   };
   refreshPlanUi();
-  window.setTimeout(next, 400);
+  later(next, 400);
 }
 
 function $(id: string): HTMLElement { return document.getElementById(id)!; }

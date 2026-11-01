@@ -86,6 +86,14 @@ describe('collisions classiques : les pièces immobiles bloquent', () => {
     expect([promoted(0), promoted(0.5), promoted(0.99)]).toEqual(['N', 'B', 'R']);
     expect(['N', 'B', 'R']).toContain(find(resolvePlans(s, plans(plan(act('wP', 2, 4)))).state, 'wP')!.type);
   });
+
+  it("la promotion tirée à la programmation est reprise telle quelle à la résolution", () => {
+    const s = createCustomState([...kings, { id: 'wP', type: 'P', color: 'white', file: 2, rank: 3 }]);
+    for (const promo of ['N', 'B', 'R'] as const) {
+      const r = resolvePlans(s, plans(plan([{ pieceId: 'wP', to: P(2, 4), promo }])), DEFAULT_RULES, () => 0.99);
+      expect(find(r.state, 'wP')!.type).toBe(promo);
+    }
+  });
 });
 
 describe('pièces en mouvement : elles se croisent sans rien se faire', () => {
@@ -181,10 +189,17 @@ describe("règle d'échec : libre pendant la manche, obligatoire seulement si le
     expect(cancelled(r.events).map((c) => [c.subTurn, c.reason])).toEqual([[0, 'king-in-check'], [1, 'king-in-check']]);
   });
 
-  it("une fois sorti d'échec, on bouge de nouveau librement (même pour se remettre en échec)", () => {
-    const r = resolvePlans(inCheckBoard(), plans(plan(act('wK', 1, 0), act('wK', 2, 0), act('wR', 4, 3))));
+  it("une fois sorti d'échec, on bouge de nouveau librement avec les autres pièces", () => {
+    const r = resolvePlans(inCheckBoard(), plans(plan(act('wK', 1, 0), act('wR', 4, 3))));
     expect(cancelled(r.events)).toHaveLength(0);
-    expect(find(r.state, 'wK')!.pos).toEqual(P(2, 0));
+    expect(find(r.state, 'wR')!.pos).toEqual(P(4, 3));
+  });
+
+  it('le roi ne peut jamais aller sur une case attaquée : déplacement rejeté', () => {
+    // retour sur la colonne 2 (attaquée par la tour noire) refusé, même une fois sorti d'échec
+    const r = resolvePlans(inCheckBoard(), plans(plan(act('wK', 1, 0), act('wK', 2, 0))));
+    expect(cancelled(r.events).map((c) => [c.subTurn, c.reason])).toEqual([[1, 'king-attacked']]);
+    expect(find(r.state, 'wK')!.pos).toEqual(P(1, 0));
   });
 
   it('roi pas en échec au départ : on bouge librement, même en exposant son roi', () => {
@@ -192,10 +207,10 @@ describe("règle d'échec : libre pendant la manche, obligatoire seulement si le
       { id: 'wK', type: 'K', color: 'white', file: 2, rank: 0 }, { id: 'bK', type: 'K', color: 'black', file: 0, rank: 4 },
       { id: 'bR', type: 'R', color: 'black', file: 2, rank: 4 }, { id: 'wR', type: 'R', color: 'white', file: 2, rank: 2 },
     ]);
-    // la tour clouée quitte la ligne, puis le roi va se promener sur des cases attaquées
+    // la tour clouée quitte la ligne (autorisé : on expose le roi) ; le roi, lui, ne marche pas sur une case attaquée
     const r = resolvePlans(s, plans(plan(act('wR', 0, 2), act('wK', 3, 0), act('wK', 3, 1), act('wK', 2, 1))));
-    expect(cancelled(r.events)).toHaveLength(0);
-    expect(find(r.state, 'wK')!.pos).toEqual(P(2, 1));
+    expect(cancelled(r.events).map((c) => [c.subTurn, c.reason])).toEqual([[3, 'king-attacked']]);
+    expect(find(r.state, 'wK')!.pos).toEqual(P(3, 1));
   });
 
   it("un échec donné en cours de manche n'oblige à rien avant la manche suivante", () => {

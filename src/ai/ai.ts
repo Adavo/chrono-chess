@@ -1,7 +1,7 @@
 import { attacksSquare, gameOutcome, isInCheck, keepsKingSafe, snapshotOf } from '../core/check';
 import { checkMove } from '../core/moves';
 import { resolvePlans, resolveSubTurn } from '../core/resolution';
-import { DEFAULT_RULES, type Color, type GameState, type Plan, type RulesConfig, type Square } from '../core/types';
+import { DEFAULT_RULES, PROMOTIONS, type Color, type GameState, type PieceType, type Plan, type RulesConfig, type Square } from '../core/types';
 
 export type Level = 'easy' | 'medium' | 'hard' | 'master';
 export const LEVELS: Level[] = ['easy', 'medium', 'hard', 'master'];
@@ -35,15 +35,18 @@ function greedyPlan(state: GameState, color: Color, rules: RulesConfig, rnd: () 
     obliged = obliged && isInCheck(working.pieces, working.size, color);
     const escape: ReadonlySet<Color> = new Set(obliged ? [color] : []);
     const snap = snapshotOf(working.pieces, working.size);
-    let best: { pieceId: string; to: Square; score: number } | null = null;
+    let best: { pieceId: string; to: Square; promo?: PieceType; score: number } | null = null;
 
     for (const p of working.pieces) {
       if (p.color !== color) continue;
       for (let f = 0; f < working.size; f++) for (let r = 0; r < working.size; r++) {
         const to = { file: f, rank: r };
         const c = checkMove(snap, p, to, dir);
-        if (!c.ok || snap.at(to)?.type === 'K' || (obliged && !keepsKingSafe(working.pieces, working.size, p, to))) continue;
+        if (!c.ok || snap.at(to)?.type === 'K' || ((obliged || p.type === 'K') && !keepsKingSafe(working.pieces, working.size, p, to))) continue;
         const victim = snap.at(to);
+        // Promotion : la pièce est tirée au sort dès la programmation (l'IA la connaît donc pour la suite).
+        const promo = p.type === 'P' && r === (color === 'white' ? working.size - 1 : 0) ? PROMOTIONS[Math.floor(rnd() * PROMOTIONS.length)] : undefined;
+        const action = { pieceId: p.id, to, ...(promo ? { promo } : {}) };
         let score = rnd() * style.noise;
         if (victim) score += (VALUE[victim.type] * 2 + 1) * style.capture;
         if (p.type === 'P') score += 0.4 + (color === 'white' ? r : working.size - 1 - r) * 0.5;
@@ -52,7 +55,7 @@ function greedyPlan(state: GameState, color: Color, rules: RulesConfig, rnd: () 
           score -= VALUE[p.type] * 1.2 * style.danger;
         }
         if (style.check > 0 || style.selfCheck > 0) {
-          const after = resolveSubTurn(working, t, [{ pieceId: p.id, to, subTurn: t, owner: color, order: 0 }], () => 0, escape).state;
+          const after = resolveSubTurn(working, t, [{ ...action, subTurn: t, owner: color, order: 0 }], () => 0, escape).state;
           // finir en échec est dangereux
           if (style.selfCheck > 0 && isInCheck(after.pieces, after.size, color)) score -= (t === rules.subTurns - 1 ? 50 : 4) * style.selfCheck;
           if (style.check > 0 && isInCheck(after.pieces, after.size, enemy)) {
@@ -60,12 +63,13 @@ function greedyPlan(state: GameState, color: Color, rules: RulesConfig, rnd: () 
             if (gameOutcome(after.pieces, after.size)?.winner === color) score += 60;
           }
         }
-        if (!best || score > best.score) best = { pieceId: p.id, to, score };
+        if (!best || score > best.score) best = { ...action, score };
       }
     }
     if (!best) { plan.push([]); continue; }
-    plan.push([{ pieceId: best.pieceId, to: best.to }]);
-    working = resolveSubTurn(working, t, [{ pieceId: best.pieceId, to: best.to, subTurn: t, owner: color, order: 0 }], () => 0, escape).state;
+    const chosen = { pieceId: best.pieceId, to: best.to, ...(best.promo ? { promo: best.promo } : {}) };
+    plan.push([chosen]);
+    working = resolveSubTurn(working, t, [{ ...chosen, subTurn: t, owner: color, order: 0 }], () => 0, escape).state;
   }
   return plan;
 }

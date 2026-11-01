@@ -1,4 +1,5 @@
 import { inBounds } from './board';
+import { PROMOTIONS, type PieceType } from './types';
 import type { ActionQueue, Color, GameState, Plan, RulesConfig } from './types';
 
 /**
@@ -22,7 +23,10 @@ export function sanitizePlan(
     for (const a of actions.slice(0, rules.maxActionsPerSubTurn)) {
       const ok =
         a && typeof a.pieceId === 'string' && ownIds.has(a.pieceId) && a.to && inBounds(a.to, state.size);
-      if (ok) plan[t]!.push({ pieceId: a.pieceId, to: { file: a.to.file, rank: a.to.rank } });
+      if (ok) {
+        const promo = PROMOTIONS.includes(a.promo as PieceType) ? (a.promo as PieceType) : undefined;
+        plan[t]!.push({ pieceId: a.pieceId, to: { file: a.to.file, rank: a.to.rank }, ...(promo ? { promo } : {}) });
+      }
       else errors.push(`sub-turn ${t}: invalid action dropped`);
     }
   });

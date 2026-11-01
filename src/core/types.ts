@@ -51,6 +51,8 @@ export interface GameState {
 export interface PlannedAction {
   pieceId: PieceId;
   to: Square;
+  /** Promotion : pièce tirée au sort au moment de la programmation (l'aperçu et la résolution coïncident). */
+  promo?: PieceType;
 }
 
 /** Plan d'un joueur : plan[i] = actions prévues au sous-tour i. */
@@ -84,7 +86,8 @@ export type CancelReason =
   | 'no-capture-target' // capture en diagonale d'un pion sans cible
   | 'target-moved' // la cible d'une capture de pion est partie
   | 'ally-conflict' // un allié prioritaire vise la même case
-  | 'king-in-check' // ce coup met ou laisse son propre roi en échec
+  | 'king-in-check' // le roi, en échec au départ, doit d'abord en sortir
+  | 'king-attacked' // le roi ne peut pas aller sur une case attaquée
   | 'king-capture'; // un roi ne se capture jamais : on le met échec et mat
 
 /** Journal d'événements : sert à animer la phase cinématique. */
